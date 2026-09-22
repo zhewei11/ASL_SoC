@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "clock": {
+    "cpu_hz": 100000000,
+    "rt_frame_hz": 1000
+  },
+  "memory": {
+    "boot_rom_base": "0x00000000",
+    "boot_rom_bytes": 8192,
+    "itcm_base": "0x00010000",
+    "itcm_bytes": 65536,
+    "dtcm_base": "0x00020000",
+    "dtcm_bytes": 65536,
+    "dram_base": "0x20000000",
+    "dram_bytes": 67108864,
+    "dma_uncached_base": "0x20000000",
+    "dma_uncached_bytes": 16777216,
+    "cached_dram_base": "0x21000000",
+    "cached_dram_bytes": 50331648
+  },
+  "dma": {
+    "max_burst_beats": 16
+  },
+  "mmio": {
+    "base": "0x10030000",
+    "bytes": 65536,
+    "protocol2_base": "0x10030000",
+    "interrupt_base": "0x10031000",
+    "cnn_base": "0x10032000",
+    "ethernet_base": "0x10033000",
+    "timer_base": "0x10034000",
+    "pose_base": "0x10035000",
+    "safety_base": "0x10036000",
+    "uart_base": "0x10037000"
+  },
+  "ethernet": {
+    "stream_width": 32,
+    "frame_buffer_base": "0x20000000",
+    "max_frame_bytes": 25600
+  },
+  "cnn": {
+    "input_width": 160,
+    "input_height": 160,
+    "input_channels": 1,
+    "mac_lanes": 16,
+    "local_sram_bytes": 262144,
+    "stub_latency_cycles": 32
+  },
+  "hand": {
+    "motor_count": 20,
+    "pose_count": 24,
+    "neutral_position": 2048,
+    "default_max_step": 64
+  },
+  "protocol2": {
+    "baud": 6000000,
+    "command_bytes": 256,
+    "feedback_bytes": 256
+  },
+  "uart": {
+    "baud": 115200
+  }
+}
