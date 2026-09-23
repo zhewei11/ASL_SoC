@@ -20,6 +20,9 @@ board wrapper整合。
 
 所有保留文件與用途見[`docs/README.md`](docs/README.md)。
 
+團隊成員開始修改前，請先閱讀
+[`docs/TEAM_GIT_TUTORIAL.md`](docs/TEAM_GIT_TUTORIAL.md)。
+
 記憶體與AXI fabric契約見
 [`docs/MEMORY_FABRIC.md`](docs/MEMORY_FABRIC.md)。
 
