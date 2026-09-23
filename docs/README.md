@@ -3,6 +3,10 @@
 本目錄只保留與目前RTL、firmware介面或驗證結果直接相關的文件。若文件內容與程式碼不一致，
 以下列順序判定：`config/asl_soc_config.json`、RTL／firmware header、測試、文件。
 
+## 團隊協作
+
+- [`TEAM_GIT_TUTORIAL.md`](TEAM_GIT_TUTORIAL.md)：Fork、功能分支、Commit、Push、Pull Request與同步upstream的完整教學。
+
 ## 系統架構
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md)：目前SoC架構、資料流、CPU/RTOS、板級邊界與未完成項目的唯一總覽。
