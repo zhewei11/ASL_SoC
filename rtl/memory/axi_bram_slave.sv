@@ -82,10 +82,12 @@ module axi_bram_slave #(
     initial begin
         if (MEMORY_BYTES < 4 || (MEMORY_BYTES % 4) != 0)
             $error("MEMORY_BYTES must be a positive multiple of four");
+
         for (index = 0; index < WORD_COUNT; index = index + 1)
             memory[index] = 32'd0;
+
         if (INIT_FILE != "")
-            $readmemh(INIT_FILE, memory);
+            $readmemh(INIT_FILE, memory, 0, WORD_COUNT - 1);
     end
 
     assign s_axi_awready = state == ST_IDLE;

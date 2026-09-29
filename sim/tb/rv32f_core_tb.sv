@@ -45,6 +45,7 @@ module core_rv32f_tb;
          .clk(clk), .rst(rst)
         ,.dma_interrupt(1'b0), .timer_interrupt(1'b0)
         ,.wdt_interrupt(1'b0), .time_value(64'd0)
+        ,.icache_miss_event(1'b0), .dcache_miss_event(1'b0)
         ,.im_valid(1'b1), .im_read_data(im_read_data)
         ,.im_stall(im_stall), .im_addr(im_addr)
         ,.im_flush(im_flush), .im_invalidate(im_invalidate)
@@ -52,6 +53,11 @@ module core_rv32f_tb;
         ,.dm_req(dm_req), .dm_stall(dm_stall), .dm_WEB(dm_web)
         ,.dm_bit_en(dm_bit_en), .dm_addr(dm_addr)
         ,.dm_write_data(dm_write_data)
+        ,.debug_halt_req(1'b0), .debug_resume_req(1'b0)
+        ,.debug_halted(), .debug_resume_event()
+        ,.debug_reg_valid(1'b0), .debug_reg_write(1'b0)
+        ,.debug_regno(16'd0), .debug_reg_wdata(32'd0)
+        ,.debug_reg_ready(), .debug_reg_rdata(), .debug_reg_error()
     );
 
     always_ff @(posedge clk or posedge rst) begin

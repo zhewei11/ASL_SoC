@@ -23,6 +23,11 @@ MMIO pages：
 | Pose Player | `0x1003_5000` |
 | Safety supervisor | `0x1003_6000` |
 | Host UART | `0x1003_7000` |
+| System Control／版本能力 | `0x1003_8000` |
+
+`0x1003_0000–0x1003_7000`是既有ABI，加入System Control時沒有搬動任何舊page。
+已發布的page或register offset不得重新指派；周邊移除後原位址必須保留，除非提升
+Platform ABI major version。
 
 `address_attributes.sv`實作固定cacheability規則。Ethernet/CNN DMA descriptor與buffer必須配置在
 `0x2000_0000–0x20FF_FFFF`；若firmware把DMA buffer放到cached區，硬體不提供cache coherence。

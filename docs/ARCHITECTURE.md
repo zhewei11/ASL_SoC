@@ -1,6 +1,6 @@
 # ASL CNN 1 kHz SoC 架構
 
-> 狀態基準：2026-09-22。本文描述目前 repository 中已存在的 RTL、韌體介面與模擬邊界，
+> 狀態基準：2026-09-24。本文描述目前 repository 中已存在的 RTL、韌體介面與模擬邊界，
 > 不是板卡規格或未來功能提案。
 
 本專案是一個可獨立模擬的 FPGA fabric SoC core：以專案內的 RV32IMF CPU 執行控制軟體，
@@ -86,12 +86,16 @@ Protocol command bank A/B --> HX5 fixed RT sequencer --> Protocol 2.0 UART
 
 CPU RTL 完整保存在 `rtl/cpu/core/`，不依賴兄弟目錄的 CPU 原始碼。預設設定為：
 
-- RV32IMF，`MISA=0x40101120`。
+- Production ISA固定為RV32IMF，`MISA=0x40101120`；A與C extension正式排除，軟體建置
+  使用`-march=rv32imf_zicsr -mabi=ilp32f`，指令必須4-byte aligned。
 - Machine mode 與 User mode。
 - 8-entry PMP，支援 TOR、NA4、NAPOT、lock 與 MPRV 存取檢查。
-- 32-entry floating-point register file；`ENABLE_CPU_FPU=1`，可在資源受限 build 關閉。
+- 32-entry floating-point register file；production `soc_core_top`固定啟用FPU，不再提供頂層
+  parameter降級成RV32IM。
 - Instruction cache 與 data cache 都是 2-way、32 sets、16-byte line，也就是各 1 KiB。
 - D-cache 採 write-through；I-cache 支援 next-line prefetch。
+- 四組 64-bit HPM counter，可量測 branch、prediction redirect、I/D-cache miss、pipeline stall、
+  trap及load/store事件；CSR與event mask見[`CPU_PERFORMANCE_MONITOR.md`](CPU_PERFORMANCE_MONITOR.md)。
 
 本地記憶體配置為 8 KiB Boot ROM、64 KiB ITCM 與 64 KiB DTCM。Instruction port 可直接
 存取 Boot ROM 與 ITCM；data port 的本地區域是 DTCM。這是 Harvard 配置，程式常數若需要由
@@ -147,11 +151,32 @@ AXI response、burst 與 backpressure 語意。
 | Pose Player | `0x1003_5000` |
 | Safety supervisor | `0x1003_6000` |
 | Host UART | `0x1003_7000` |
+| System Control／版本能力 | `0x1003_8000` |
 
 LIC 的八個來源依序是 Ethernet frame、CNN、Protocol、Host UART、watchdog、safety、
 pose-to-protocol error 與 Ethernet frame error。Machine timer 直接提供 CPU `MTIP`，LIC 提供
 `MEIP`；`time` CSR 與 MMIO `mtime` 共用同一 counter。register offset、W1C 與 side effect
 定義見[`MMIO_REGISTERS.md`](MMIO_REGISTERS.md)。
+
+這些page、IRQ ID與MMIO access semantics自Platform ABI 1.0起凍結。新增周邊只能配置未使用page；
+既有位址不得因RTL重構而搬動。System Control提供ABI／RTL版本、MISA、clock、topology與實際
+capability bits，讓RTOS不必靠讀取不存在的page探測功能。
+
+### 標準RISC-V Debug決策
+
+本專案已納入[RISC-V Debug Specification 1.0](https://docs.riscv.org/reference/debug/index.html)
+定義的最小單hart external debug，System Control `CAPABILITIES0[7]`為1。現有
+`soc_core_top.mmio_*`只供`ENABLE_CPU=0`的verification requester使用，不是RISC-V Debug Module。
+
+外部介面為`jtag_tck/tms/tdi/tdo/trst_n`。JTAG DTM提供7-bit DMI address與toggle-handshake CDC；
+Debug Module提供`dmcontrol`、`dmstatus`、`abstractcs`、`command`及`data0/data1`，支援halt/resume、
+`ndmreset`、halt-on-reset、x0–x31、`dcsr`／`dpc`／`dscratch0`，以及對齊的32-bit Abstract Access
+Memory。記憶體命令借用已停止hart的資料cache/MMIO路徑，因此可存取hart data view內的DTCM、
+MMIO與DRAM；resume會invalidate I/D cache。
+
+此最小組態沒有Program Buffer、System Bus Access、hardware trigger、multi-hart selection或
+single-step，authentication固定為已通過。RTL JTAG回歸已覆蓋halt/resume、register與DTCM memory；
+OpenOCD/GDB及實體JTAG probe仍須在板級整合後驗證。
 
 ## 8. Ethernet、DMA 與 CNN
 
@@ -201,7 +226,8 @@ USB-to-UART bridge，或在未來 board wrapper 整合獨立 USB device controll
 
 | 已在 RTL／模擬中建立 | 尚未建立或需實機確認 |
 |---|---|
-| RV32IMF、FPU、U-mode、PMP/MPRV | Production RTOS task 與 U-mode syscall port |
+| 凍結RV32IMF、FPU、U-mode、PMP/MPRV | Debug Program Buffer、SBA、trigger、single-step |
+| JTAG DTM、DMI、單hart Debug Module、abstract register/memory | OpenOCD/GDB與實體JTAG probe驗證 |
 | Boot ROM、ITCM、DTCM、cache 與 AXI master | Board clock/reset、DDR MIG、pin/XDC、timing closure |
 | Ethernet RX payload stream 與 S2MM | Ethernet MAC/PHY、IP/UDP parser、TX path |
 | CNN MM2S、MMIO、IRQ、固定延遲 stub | 真實 INT8 CNN、MAC array 與 local SRAM datapath |

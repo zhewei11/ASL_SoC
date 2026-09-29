@@ -1,6 +1,10 @@
 # Verification Status
 
-更新日期：2026-09-22
+更新日期：2026-09-24
+
+> 下列passing結果是2026-09-23最後一次完整回歸的基準。2026-09-24新增的RV32IMF／IRQ ABI
+> 凍結與System Control page依要求尚未執行測試；其directed checks已加入，必須在下一次
+> `make test && make lint`通過後才能併入passing基準。
 
 ## Passing regression
 
@@ -89,6 +93,9 @@ make lint
 - U-mode、8-entry PMP與MPRV已通過49項CSR／比對測試，涵蓋TOR、NA4、NAPOT、entry priority、
   跨區拒絕、lock、MPRV及cause 1／5／7；完整CPU回歸亦確認`mret`可進入U-mode，且被拒絕的store
   不會送上data bus；跳到非X區域也會精確產生instruction access fault。
+- 四組64-bit HPM counter已通過39項CSR測試，涵蓋event mask、`mcountinhibit`、高低字讀寫及
+  `mcounteren` U-mode gating；另以9項cache事件測試確認I-cache demand miss、D-cache load miss
+  與write-through store排除語意。
 - Boot firmware實際通過FADD.S、FMUL.S、FDIV.S、FCVT.W.S、FLW／FSW、fcsr與
   `mstatus.FS=Dirty`檢查，且沒有unexpected trap。
 - RV32F unit通過29項算術、比較、轉換、rounding、NaN／Inf與exception flag檢查；
@@ -97,7 +104,8 @@ make lint
 - Boot ROM／ITCM／DTCM本地請求不會逃逸到外部DRAM AXI。
 - CPU general DRAM store使用write-through單拍AXI，首次load使用一筆4-beat cache-line refill，
   同一line後續load由D-cache hit完成且資料一致。
-- Internal CPU啟用時，外部debug MMIO requester不會與CPU爭用。
+- Internal CPU啟用時，外部verification MMIO requester不會與CPU爭用；此介面不是標準
+  RISC-V external debug。
 - CPU firmware以LIC software pending觸發`mcause=0x8000000B`，完成claim/complete後再由
   `mtimecmp`觸發`mcause=0x80000007`；CPU time CSR與MMIO mtime共用同一counter。
 - 20軸Pose依官方Indirect Data格式正確打包成86-byte Sync Write body及5-byte Read body；
@@ -138,6 +146,11 @@ make lint
 ## Remaining work
 
 下列項目無法由目前已凍結的SoC Core介面與Behavioral model自行關閉：
+
+- JTAG DTM／DMI與單hart Debug Module已由`make debug-test`走實際JTAG scan驗證halt/resume、
+  x9讀寫、`dcsr/dpc`、32-bit DTCM Abstract Access Memory及`ndmreset`/halt-on-reset，共84項
+  檢查。尚待板級確認的是
+  OpenOCD/GDB與實體probe；Program Buffer、SBA、trigger及single-step不在目前實作能力內。
 
 - FreeRTOS 11.3基準application已接入整機模擬，兩個task會經machine-timer tick反覆切換，
   並以不同`f8`值驗證浮點context保存／恢復。尚未接入的是正式1 kHz trajectory task、

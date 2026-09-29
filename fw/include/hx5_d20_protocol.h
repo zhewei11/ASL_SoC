@@ -86,13 +86,16 @@ static inline void hx5_d20_pack_axis_command(
     hx5_d20_store_u16_le(&destination[2], (uint16_t)command->goal_current);
 }
 
-static inline void hx5_d20_write_command_bank(
-    uint32_t bank,
+static inline void hx5_d20_build_command_frame(
+    uint8_t frame[HX5_D20_COMMAND_FRAME_BYTES],
     const hx5_d20_axis_command_t commands[HX5_D20_AXIS_COUNT],
-    uint32_t sequence,
     uint8_t hand_id
 ) {
-    uint8_t frame[HX5_D20_COMMAND_FRAME_BYTES] = {0};
+    uint32_t byte;
+    uint32_t axis;
+
+    for (byte = 0u; byte < HX5_D20_COMMAND_FRAME_BYTES; ++byte)
+        frame[byte] = 0u;
 
     frame[0] = (uint8_t)HX5_D20_INSTRUCTION_SYNC_WRITE;
     hx5_d20_store_u16_le(
@@ -105,7 +108,7 @@ static inline void hx5_d20_write_command_bank(
     );
     frame[5] = hx5_d20_valid_hand_id(hand_id);
 
-    for (uint32_t axis = 0; axis < HX5_D20_AXIS_COUNT; ++axis) {
+    for (axis = 0u; axis < HX5_D20_AXIS_COUNT; ++axis) {
         hx5_d20_pack_axis_command(
             &frame[6u + axis * HX5_D20_AXIS_COMMAND_BYTES],
             &commands[axis]
@@ -121,6 +124,17 @@ static inline void hx5_d20_write_command_bank(
         &frame[HX5_D20_READ_BODY_OFFSET + 3u],
         (uint16_t)HX5_D20_FEEDBACK_BYTES
     );
+}
+
+static inline void hx5_d20_write_command_bank(
+    uint32_t bank,
+    const hx5_d20_axis_command_t commands[HX5_D20_AXIS_COUNT],
+    uint32_t sequence,
+    uint8_t hand_id
+) {
+    uint8_t frame[HX5_D20_COMMAND_FRAME_BYTES];
+
+    hx5_d20_build_command_frame(frame, commands, hand_id);
 
     protocol2_rt_select_memory(
         bank ? PROTOCOL2_MEM_COMMAND_B : PROTOCOL2_MEM_COMMAND_A,

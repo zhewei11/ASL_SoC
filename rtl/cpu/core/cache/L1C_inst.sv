@@ -12,6 +12,7 @@ module L1C_inst (
     ,input  logic         core_access_allowed
     ,output logic         core_valid
     ,output logic [31:0]  core_out
+    ,output logic         miss_event
 
     // Memory interface
     ,output logic         mem_req
@@ -146,6 +147,10 @@ module L1C_inst (
     assign core_valid = core_access_allowed && !invalidate && hit;
     assign core_out   = select_word(hit_line, lookup_word);
     assign core_accept = core_valid && !core_stall && !core_flush;
+    // One pulse per demand miss.  Background next-line prefetches are not
+    // counted, so software can use this event to measure visible fetch misses.
+    assign miss_event = (state == CACHE_IDLE) && core_access_allowed &&
+                        !core_flush && !invalidate && !hit;
 
     assign mem_req  = (state == MISS_REQUEST);
     assign mem_addr = {miss_addr_q[29:2], 4'b0000};

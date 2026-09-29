@@ -6,6 +6,8 @@ rtl/interconnect/soc_mmio_subsystem.sv
 rtl/interconnect/axi4_4x1_arbiter.sv
 rtl/interconnect/axi4_1x3_decoder.sv
 rtl/memory/axi_bram_slave.sv
+rtl/debug/riscv_jtag_dtm.sv
+rtl/debug/riscv_debug_module.sv
 rtl/cpu/core/if/ras.sv
 rtl/cpu/core/if/bht.sv
 rtl/cpu/core/if/bpb.sv

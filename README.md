@@ -6,7 +6,7 @@ board wrapper整合。
 
 ## Baseline
 
-- Fabric RV32IMF CPU，包含單精度F-extension與32-entry浮點暫存器檔。
+- 固定RV32IMF CPU（不含A/C），包含單精度F-extension與32-entry浮點暫存器檔。
 - Boot ROM、64 KiB ITCM、64 KiB DTCM。
 - Cached／uncached地址解碼與AXI Behavioral DRAM。
 - 32-bit Ethernet L2 frame stream與RX DMA shell。
@@ -80,11 +80,13 @@ Ethernet MAC/IP/UDP、DDR controller、USB bridge與實體板級I/O仍屬後續�
   strict real-time enforcement。
 - Behavioral AXI DRAM與端到端smoke test已建立。
 - RV32IMF CPU source已完整放入`rtl/cpu/core`；file list不再引用兄弟專案的CPU RTL。
-  FPU與32-entry floating register file已納入，預設`ENABLE_CPU_FPU=1`且`MISA.F=1`；
-  資源受限build仍可用parameter停用FPU。
+  Production ISA與`MISA=0x40101120`已凍結，A/C extension排除，FPU與32-entry floating
+  register file固定納入；頂層不再提供關閉FPU而改變ISA的parameter。
 - CPU已加入RISC-V U-mode與8-entry PMP（TOR／NA4／NAPOT、lock、取指／load／store
   access-fault），可讓RTOS kernel留在M-mode並隔離U-mode task；整合方式見
   [`docs/RTOS_PMP_GUIDE.md`](docs/RTOS_PMP_GUIDE.md)。
+- CPU提供四組64-bit HPM counter，能由firmware量測branch prediction、I/D-cache miss、pipeline
+  stall及trap；CSR與event定義見[`docs/CPU_PERFORMANCE_MONITOR.md`](docs/CPU_PERFORMANCE_MONITOR.md)。
 - FreeRTOS 11.3 M-mode基準映像已可從Boot ROM啟動，程式／常數／資料分別載入ITCM與DTCM；
   整機回歸會驗證兩個task、machine-timer tick與FPU context switch。正式trajectory、CNN及
   Protocol driver task尚未接入。
@@ -93,6 +95,11 @@ Ethernet MAC/IP/UDP、DDR controller、USB bridge與實體板級I/O仍屬後續�
 - CPU general DRAM cached路徑已驗證4-beat line refill、cache hit及write-through。
 - CPU uncached MMIO已直接接到新SoC page decoder，不經舊`rtos_core` MMIO decoder。
 - 8-source local interrupt controller與64-bit Machine Timer已接到RV32IMF MEIP／MTIP及time CSR。
+- 原有MMIO page保持不變，新增`0x1003_8000` System Control page回報Platform ABI、RTL版本、
+  MISA、clock、topology及實際capabilities；IRQ ID 1–8與MMIO access semantics已凍結。
+- 已整合RISC-V Debug Specification 1.0最小單hart組態：JTAG DTM／DMI、halt/resume、
+  `dcsr`／`dpc`／`dscratch0`、GPR abstract access及32-bit Abstract Access Memory；現有外部
+  MMIO verification port仍不視為標準debug。Program Buffer、SBA、trigger及single-step未實作。
 - 四slot外部AXI arbiter已接入：CPU instruction/data分別使用slot 0／1，雙通道DMA的
   S2MM／MM2S共用slot 2，slot 3保留；address grant在AW/AR backpressure期間會鎖定。
 - 最小RV32IMF firmware會寫DTCM signature、讀Protocol ID／CNN status，並驗證

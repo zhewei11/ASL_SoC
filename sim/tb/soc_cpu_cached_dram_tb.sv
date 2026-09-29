@@ -5,6 +5,8 @@ module soc_cpu_cached_dram_tb;
     logic clk = 1'b0;
     logic rst = 1'b1;
     always #5 clk = ~clk;
+    logic jtag_tck = 1'b0, jtag_tms = 1'b1, jtag_tdi = 1'b0;
+    logic jtag_trst_n = 1'b0, jtag_tdo;
 
     logic mmio_valid = 0, mmio_ready, mmio_write = 0, mmio_error;
     logic [31:0] mmio_addr = 0, mmio_wdata = 0, mmio_rdata;
@@ -173,6 +175,12 @@ module soc_cpu_cached_dram_tb;
               "four CPU stores create four single-beat AXI writes");
         check(dram_read_bursts == 1 && !bad_dram_request,
               "one four-beat refill serves all cached DRAM loads");
+        check(dut.u_soc_cpu_cluster.u_cpu.u_cpu_wrapper.u_core.
+              u_csr_registers.hpm_counter[2] != 64'd0,
+              "HPM5 observes instruction-cache demand misses");
+        check(dut.u_soc_cpu_cluster.u_cpu.u_cpu_wrapper.u_core.
+              u_csr_registers.hpm_counter[3] != 64'd0,
+              "HPM6 observes the cached DRAM load miss");
         check(!mmio_ready,
               "external debug MMIO is isolated while internal CPU owns MMIO");
         $display("CPU cached DRAM regression: %0d checks passed", checks);

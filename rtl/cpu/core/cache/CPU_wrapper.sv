@@ -15,6 +15,26 @@ module CPU_wrapper #(
     ,input  logic        external_timer_interrupt
     ,input  logic [63:0] external_mtime_value
 
+    // RISC-V Debug Module hart interface.
+    ,input  logic        debug_halt_req
+    ,input  logic        debug_resume_req
+    ,output logic        debug_halted
+    ,input  logic        debug_reg_valid
+    ,input  logic        debug_reg_write
+    ,input  logic [15:0] debug_regno
+    ,input  logic [31:0] debug_reg_wdata
+    ,output logic        debug_reg_ready
+    ,output logic [31:0] debug_reg_rdata
+    ,output logic        debug_reg_error
+    ,input  logic        debug_mem_valid
+    ,input  logic        debug_mem_write
+    ,input  logic [31:0] debug_mem_addr
+    ,input  logic [31:0] debug_mem_wdata
+    ,input  logic [3:0]  debug_mem_wstrb
+    ,output logic        debug_mem_ready
+    ,output logic [31:0] debug_mem_rdata
+    ,output logic        debug_mem_error
+
     // Generic DSP/AI coprocessor command/response interface.
     ,output logic        cp_cmd_valid
     ,input  logic        cp_cmd_ready
@@ -110,6 +130,15 @@ module CPU_wrapper #(
     logic [31:0] dm_bit_en;
     logic [31:0] dm_addr;
     logic [31:0] dm_write_data;
+    logic        routed_dm_valid;
+    logic [31:0] routed_dm_read_data;
+    logic        selected_dm_req;
+    logic        selected_dm_write;
+    logic [31:0] selected_dm_addr;
+    logic [31:0] selected_dm_wdata;
+    logic [3:0]  selected_dm_wstrb;
+    logic        debug_mem_selected;
+    logic        debug_resume_event;
     logic        dcache_req;
     logic        dcache_valid;
     logic [31:0] dcache_read_data;
@@ -143,6 +172,8 @@ module CPU_wrapper #(
     logic [3:0]  d_write_strb;
     logic        d_write_ready;
     logic        d_write_done;
+    logic        icache_miss_event;
+    logic        dcache_miss_event;
 
     // =============================================
     // Cache coherence
@@ -166,7 +197,8 @@ module CPU_wrapper #(
     end
 
     assign cache_invalidate = (interrupt && !dma_interrupt_q) ||
-                              (WTO && !wdt_interrupt_q);
+                              (WTO && !wdt_interrupt_q) ||
+                              debug_resume_event;
 
     function automatic logic [3:0] bweb_to_wstrb(
          input logic [31:0] bweb
@@ -180,6 +212,20 @@ module CPU_wrapper #(
     endfunction
 
     assign dm_write_strb = bweb_to_wstrb(dm_bit_en);
+    assign debug_mem_selected = debug_mem_valid && debug_halted;
+    assign selected_dm_req = debug_mem_selected ? debug_mem_valid : dm_req;
+    assign selected_dm_write = debug_mem_selected ? debug_mem_write : !dm_WEB;
+    assign selected_dm_addr = debug_mem_selected ?
+                              {2'b0, debug_mem_addr[31:2]} : dm_addr;
+    assign selected_dm_wdata = debug_mem_selected ?
+                               debug_mem_wdata : dm_write_data;
+    assign selected_dm_wstrb = debug_mem_selected ?
+                               debug_mem_wstrb : dm_write_strb;
+    assign dm_valid = !debug_mem_selected && routed_dm_valid;
+    assign dm_read_data = routed_dm_read_data;
+    assign debug_mem_ready = debug_mem_selected && routed_dm_valid;
+    assign debug_mem_rdata = routed_dm_read_data;
+    assign debug_mem_error = 1'b0;
 
     core #(
          .ENABLE_FPU (ENABLE_FPU)
@@ -190,6 +236,8 @@ module CPU_wrapper #(
         ,.timer_interrupt   (timer_interrupt)
         ,.wdt_interrupt     (1'b0)
         ,.time_value        (mtime_value)
+        ,.icache_miss_event (icache_miss_event)
+        ,.dcache_miss_event (dcache_miss_event)
         ,.im_valid          (im_valid)
         ,.im_read_data      (im_read_data)
         ,.im_stall          (im_stall)
@@ -205,6 +253,17 @@ module CPU_wrapper #(
         ,.dm_bit_en         (dm_bit_en)
         ,.dm_addr           (dm_addr)
         ,.dm_write_data     (dm_write_data)
+        ,.debug_halt_req    (debug_halt_req)
+        ,.debug_resume_req  (debug_resume_req)
+        ,.debug_halted      (debug_halted)
+        ,.debug_resume_event(debug_resume_event)
+        ,.debug_reg_valid   (debug_reg_valid)
+        ,.debug_reg_write   (debug_reg_write)
+        ,.debug_regno       (debug_regno)
+        ,.debug_reg_wdata   (debug_reg_wdata)
+        ,.debug_reg_ready   (debug_reg_ready)
+        ,.debug_reg_rdata   (debug_reg_rdata)
+        ,.debug_reg_error   (debug_reg_error)
     );
 
     L1C_inst u_l1c_inst (
@@ -217,6 +276,7 @@ module CPU_wrapper #(
         ,.core_access_allowed (im_access_allowed)
         ,.core_valid          (im_valid)
         ,.core_out            (im_read_data)
+        ,.miss_event          (icache_miss_event)
         ,.mem_req             (i_mem_req)
         ,.mem_addr            (i_mem_addr)
         ,.mem_ready           (i_mem_ready)
@@ -229,13 +289,14 @@ module CPU_wrapper #(
         ,.rst             (rst)
         ,.invalidate      (cache_invalidate)
         ,.core_req        (dcache_req)
-        ,.core_write      (!dm_WEB)
-        ,.core_addr       (dm_addr)
-        ,.core_in         (dm_write_data)
-        ,.core_wstrb      (dm_write_strb)
+        ,.core_write      (selected_dm_write)
+        ,.core_addr       (selected_dm_addr)
+        ,.core_in         (selected_dm_wdata)
+        ,.core_wstrb      (selected_dm_wstrb)
         ,.core_stall      (dm_stall)
         ,.core_valid      (dcache_valid)
         ,.core_out        (dcache_read_data)
+        ,.read_miss_event (dcache_miss_event)
         ,.mem_read_req    (d_read_req)
         ,.mem_read_addr   (d_read_addr)
         ,.mem_read_ready  (d_read_ready)
@@ -256,13 +317,13 @@ module CPU_wrapper #(
          .MMIO_BASE (MMIO_BASE)
         ,.MMIO_MASK (MMIO_MASK)
     ) u_uncached_mmio_router (
-         .core_req       (dm_req)
-        ,.core_write     (!dm_WEB)
-        ,.core_word_addr (dm_addr)
-        ,.core_wdata     (dm_write_data)
-        ,.core_wstrb     (dm_write_strb)
-        ,.core_valid     (dm_valid)
-        ,.core_rdata     (dm_read_data)
+         .core_req       (selected_dm_req)
+        ,.core_write     (selected_dm_write)
+        ,.core_word_addr (selected_dm_addr)
+        ,.core_wdata     (selected_dm_wdata)
+        ,.core_wstrb     (selected_dm_wstrb)
+        ,.core_valid     (routed_dm_valid)
+        ,.core_rdata     (routed_dm_read_data)
         ,.cache_req      (dcache_req)
         ,.cache_valid    (dcache_valid)
         ,.cache_rdata    (dcache_read_data)

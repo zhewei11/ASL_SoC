@@ -30,9 +30,11 @@ module csr_registers #(
     ,input              timer_interrupt
     ,input              wdt_interrupt
     ,input      [63:0]  time_value
+    ,input      [7:0]   hpm_events
     ,input              fp_flags_valid
     ,input      [4:0]   fp_flags
     ,input              fp_state_dirty
+    ,input              debug_halt
     ,output reg [31:0]  csr_read_data
     ,output     [31:0]  redirect_pc
     ,output             trap_taken
@@ -56,6 +58,9 @@ module csr_registers #(
     localparam CSR_MIE        = 12'h304;
     localparam CSR_MTVEC      = 12'h305;
     localparam CSR_MCOUNTEREN = 12'h306;
+    localparam CSR_MCOUNTINHIBIT = 12'h320;
+    localparam CSR_MHPMEVENT3 = 12'h323;
+    localparam CSR_MHPMEVENT6 = 12'h326;
     localparam CSR_MSCRATCH   = 12'h340;
     localparam CSR_MEPC       = 12'h341;
     localparam CSR_MCAUSE     = 12'h342;
@@ -67,14 +72,22 @@ module csr_registers #(
     localparam CSR_PMPADDR7   = 12'h3B7;
     localparam CSR_MCYCLE     = 12'hB00;
     localparam CSR_MINSTRET   = 12'hB02;
+    localparam CSR_MHPMCOUNTER3 = 12'hB03;
+    localparam CSR_MHPMCOUNTER6 = 12'hB06;
     localparam CSR_MCYCLEH    = 12'hB80;
     localparam CSR_MINSTRETH  = 12'hB82;
+    localparam CSR_MHPMCOUNTER3H = 12'hB83;
+    localparam CSR_MHPMCOUNTER6H = 12'hB86;
     localparam CSR_CYCLE      = 12'hC00;
     localparam CSR_TIME       = 12'hC01;
     localparam CSR_INSTRET    = 12'hC02;
+    localparam CSR_HPMCOUNTER3 = 12'hC03;
+    localparam CSR_HPMCOUNTER6 = 12'hC06;
     localparam CSR_CYCLEH     = 12'hC80;
     localparam CSR_TIMEH      = 12'hC81;
     localparam CSR_INSTRETH   = 12'hC82;
+    localparam CSR_HPMCOUNTER3H = 12'hC83;
+    localparam CSR_HPMCOUNTER6H = 12'hC86;
     localparam CSR_MVENDORID  = 12'hF11;
     localparam CSR_MARCHID    = 12'hF12;
     localparam CSR_MIMPID     = 12'hF13;
@@ -112,6 +125,7 @@ module csr_registers #(
     reg [31:0] mie;
     reg [31:0] mtvec;
     reg [31:0] mcounteren;
+    reg [31:0] mcountinhibit;
     reg [31:0] mscratch;
     reg [31:0] mepc;
     reg [31:0] mcause;
@@ -121,11 +135,14 @@ module csr_registers #(
     reg [31:0] wfi_resume_pc;
     reg [63:0] cycle_counter;
     reg [63:0] instret_counter;
+    reg [63:0] hpm_counter [0:3];
+    reg [31:0] hpm_event [0:3];
     reg        wdt_pending_q;
     reg [1:0]  privilege_q;
     reg [7:0]  pmpcfg [0:7];
     reg [31:0] pmpaddr [0:7];
     integer    pmp_i;
+    integer    hpm_i;
 
     assign current_privilege = privilege_q;
     assign fp_rounding_mode = frm;
@@ -308,10 +325,29 @@ module csr_registers #(
     wire pmpaddr_address = (csr_addr >= CSR_PMPADDR0) &&
                            (csr_addr <= CSR_PMPADDR7);
     wire [2:0] pmp_csr_index = csr_addr[2:0];
+    wire mhpmevent_address = (csr_addr >= CSR_MHPMEVENT3) &&
+                             (csr_addr <= CSR_MHPMEVENT6);
+    wire mhpmcounter_address =
+        ((csr_addr >= CSR_MHPMCOUNTER3) &&
+         (csr_addr <= CSR_MHPMCOUNTER6)) ||
+        ((csr_addr >= CSR_MHPMCOUNTER3H) &&
+         (csr_addr <= CSR_MHPMCOUNTER6H));
+    wire hpmcounter_address =
+        ((csr_addr >= CSR_HPMCOUNTER3) &&
+         (csr_addr <= CSR_HPMCOUNTER6)) ||
+        ((csr_addr >= CSR_HPMCOUNTER3H) &&
+         (csr_addr <= CSR_HPMCOUNTER6H));
+    wire hpmcounter_high_address =
+        ((csr_addr >= CSR_MHPMCOUNTER3H) &&
+         (csr_addr <= CSR_MHPMCOUNTER6H)) ||
+        ((csr_addr >= CSR_HPMCOUNTER3H) &&
+         (csr_addr <= CSR_HPMCOUNTER6H));
+    wire [1:0] hpm_csr_index = csr_addr[1:0] + 2'd1;
     wire user_counter_address =
         (csr_addr == CSR_CYCLE) || (csr_addr == CSR_CYCLEH) ||
         (csr_addr == CSR_TIME) || (csr_addr == CSR_TIMEH) ||
-        (csr_addr == CSR_INSTRET) || (csr_addr == CSR_INSTRETH);
+        (csr_addr == CSR_INSTRET) || (csr_addr == CSR_INSTRETH) ||
+        hpmcounter_address;
 
     wire csr_address_implemented =
         (ENABLE_FPU && ((csr_addr == CSR_FFLAGS) ||
@@ -320,11 +356,13 @@ module csr_registers #(
         (csr_addr == CSR_MSTATUS)    || (csr_addr == CSR_MISA)       ||
         (csr_addr == CSR_MIE)        || (csr_addr == CSR_MTVEC)      ||
         (csr_addr == CSR_MCOUNTEREN) || (csr_addr == CSR_MSCRATCH)   ||
+        (csr_addr == CSR_MCOUNTINHIBIT) || mhpmevent_address          ||
         (csr_addr == CSR_MEPC)       || (csr_addr == CSR_MCAUSE)     ||
         (csr_addr == CSR_MTVAL)      || (csr_addr == CSR_MIP)        ||
         pmpcfg_address               || pmpaddr_address              ||
         (csr_addr == CSR_MCYCLE)     || (csr_addr == CSR_MINSTRET)   ||
         (csr_addr == CSR_MCYCLEH)    || (csr_addr == CSR_MINSTRETH)  ||
+        mhpmcounter_address          ||
         user_counter_address         || (csr_addr == CSR_MVENDORID)  ||
         (csr_addr == CSR_MARCHID)    || (csr_addr == CSR_MIMPID)     ||
         (csr_addr == CSR_MHARTID)    || (csr_addr == CSR_MCONFIGPTR);
@@ -335,21 +373,32 @@ module csr_registers #(
                         (csr_addr == CSR_FCSR))) ||
         (csr_addr == CSR_MSTATUS)    || (csr_addr == CSR_MIE)        ||
         (csr_addr == CSR_MTVEC)      || (csr_addr == CSR_MCOUNTEREN) ||
+        (csr_addr == CSR_MCOUNTINHIBIT) || mhpmevent_address          ||
         (csr_addr == CSR_MSCRATCH)   || (csr_addr == CSR_MEPC)       ||
         (csr_addr == CSR_MCAUSE)     || (csr_addr == CSR_MTVAL)      ||
         pmpcfg_address               || pmpaddr_address              ||
         (csr_addr == CSR_MCYCLE)     || (csr_addr == CSR_MINSTRET)   ||
-        (csr_addr == CSR_MCYCLEH)    || (csr_addr == CSR_MINSTRETH);
+        (csr_addr == CSR_MCYCLEH)    || (csr_addr == CSR_MINSTRETH)  ||
+        mhpmcounter_address;
 
     wire [31:0] csr_operand = csr_funct3[2]
                             ? {27'd0, csr_rs1} : csr_rs1_data;
     wire csr_write_attempt = (csr_funct3[1:0] == 2'b01) ?
                              1'b1 : (csr_operand != 32'd0);
-    wire counter_access_allowed =
-        ((csr_addr == CSR_CYCLE) || (csr_addr == CSR_CYCLEH)) ?
-            mcounteren[0] :
-        ((csr_addr == CSR_TIME) || (csr_addr == CSR_TIMEH)) ?
-            mcounteren[1] : mcounteren[2];
+    reg counter_access_allowed;
+    always @(*) begin
+        if ((csr_addr == CSR_CYCLE) || (csr_addr == CSR_CYCLEH))
+            counter_access_allowed = mcounteren[0];
+        else if ((csr_addr == CSR_TIME) || (csr_addr == CSR_TIMEH))
+            counter_access_allowed = mcounteren[1];
+        else if ((csr_addr == CSR_INSTRET) ||
+                 (csr_addr == CSR_INSTRETH))
+            counter_access_allowed = mcounteren[2];
+        else if (hpmcounter_address)
+            counter_access_allowed = mcounteren[{2'b00, csr_addr[2:0]}];
+        else
+            counter_access_allowed = 1'b0;
+    end
     wire csr_privilege_illegal = privilege_q < csr_addr[9:8];
     wire csr_counter_illegal = (privilege_q == PRIV_U) &&
                                user_counter_address &&
@@ -419,7 +468,13 @@ module csr_registers #(
     reg        csr_write_enable;
 
     always @(*) begin
-        case (csr_addr)
+        if (mhpmevent_address)
+            csr_read_data = hpm_event[hpm_csr_index];
+        else if (mhpmcounter_address || hpmcounter_address)
+            csr_read_data = hpmcounter_high_address ?
+                            hpm_counter[hpm_csr_index][63:32] :
+                            hpm_counter[hpm_csr_index][31:0];
+        else case (csr_addr)
             CSR_FFLAGS:     csr_read_data = {27'd0, fflags};
             CSR_FRM:        csr_read_data = {29'd0, frm};
             CSR_FCSR:       csr_read_data = {24'd0, frm, fflags};
@@ -428,6 +483,7 @@ module csr_registers #(
             CSR_MIE:        csr_read_data = mie;
             CSR_MTVEC:      csr_read_data = mtvec;
             CSR_MCOUNTEREN: csr_read_data = mcounteren;
+            CSR_MCOUNTINHIBIT: csr_read_data = mcountinhibit;
             CSR_MSCRATCH:   csr_read_data = mscratch;
             CSR_MEPC:       csr_read_data = mepc;
             CSR_MCAUSE:     csr_read_data = mcause;
@@ -494,6 +550,7 @@ module csr_registers #(
             mie             <= 32'd0;
             mtvec           <= `RTOS_CORE_CPU_MACHINE_TRAP_VECTOR;
             mcounteren      <= 32'd0;
+            mcountinhibit   <= 32'd0;
             mscratch        <= 32'd0;
             mepc            <= 32'd0;
             mcause          <= 32'd0;
@@ -509,17 +566,34 @@ module csr_registers #(
                 pmpcfg[pmp_i] <= 8'd0;
                 pmpaddr[pmp_i] <= 32'd0;
             end
+            for (hpm_i = 0; hpm_i < 4; hpm_i = hpm_i + 1) begin
+                hpm_counter[hpm_i] <= 64'd0;
+                // HPM3..6 default to branch, branch-miss, I-cache miss and
+                // D-cache read-miss respectively.  Firmware may replace each
+                // selector with any low-eight-bit event mask.
+                hpm_event[hpm_i] <= 32'd1 << hpm_i;
+            end
         end else begin
-            cycle_counter <= cycle_counter + 64'd1;
-            if (execute && instr_valid && !sync_exception)
+            if (!mcountinhibit[0])
+                cycle_counter <= cycle_counter + 64'd1;
+            if (!mcountinhibit[2] && execute && instr_valid &&
+                !sync_exception)
                 instret_counter <= instret_counter + 64'd1;
+            for (hpm_i = 0; hpm_i < 4; hpm_i = hpm_i + 1)
+                if (!mcountinhibit[hpm_i + 3] &&
+                    |(hpm_event[hpm_i][7:0] & hpm_events))
+                    hpm_counter[hpm_i] <= hpm_counter[hpm_i] + 64'd1;
 
             if (ENABLE_FPU && fp_flags_valid)
                 fflags <= fflags | fp_flags;
             if (ENABLE_FPU && (fp_flags_valid || fp_state_dirty))
                 mstatus[14:13] <= 2'b11;
 
-            if (trap_taken) begin
+            if (debug_halt) begin
+                // A halt request wakes a hart from WFI into Debug Mode rather
+                // than leaving instruction fetch permanently asleep.
+                wfi_active <= 1'b0;
+            end else if (trap_taken) begin
                 mepc <= sync_exception ? {current_pc[31:2], 2'b00} :
                         wfi_active ? {wfi_resume_pc[31:2], 2'b00} :
                                      {trap_resume_pc[31:2], 2'b00};
@@ -544,7 +618,17 @@ module csr_registers #(
                     wfi_active    <= 1'b1;
                     wfi_resume_pc <= trap_resume_pc;
                 end else if (csr_en && csr_write_enable) begin
-                    case (csr_addr)
+                    if (mhpmevent_address)
+                        hpm_event[hpm_csr_index] <=
+                            csr_write_value & 32'h0000_00ff;
+                    else if (mhpmcounter_address) begin
+                        if (hpmcounter_high_address)
+                            hpm_counter[hpm_csr_index][63:32] <=
+                                csr_write_value;
+                        else
+                            hpm_counter[hpm_csr_index][31:0] <=
+                                csr_write_value;
+                    end else case (csr_addr)
                         CSR_FFLAGS: begin
                             fflags <= csr_write_value[4:0];
                             mstatus[14:13] <= 2'b11;
@@ -568,7 +652,9 @@ module csr_registers #(
                             mtvec <= {csr_write_value[31:2], 1'b0,
                                       csr_write_value[0]};
                         CSR_MCOUNTEREN:
-                            mcounteren <= csr_write_value & 32'h0000_0007;
+                            mcounteren <= csr_write_value & 32'h0000_007f;
+                        CSR_MCOUNTINHIBIT:
+                            mcountinhibit <= csr_write_value & 32'h0000_007d;
                         CSR_MSCRATCH:
                             mscratch <= csr_write_value;
                         CSR_MEPC:

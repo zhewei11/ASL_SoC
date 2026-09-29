@@ -20,6 +20,26 @@ module rv32im_cpu_subsystem #(
     ,input  logic        timer_irq
     ,input  logic [63:0] mtime_value
 
+    // RISC-V Debug Module hart interface.
+    ,input  logic        debug_halt_req
+    ,input  logic        debug_resume_req
+    ,output logic        debug_halted
+    ,input  logic        debug_reg_valid
+    ,input  logic        debug_reg_write
+    ,input  logic [15:0] debug_regno
+    ,input  logic [31:0] debug_reg_wdata
+    ,output logic        debug_reg_ready
+    ,output logic [31:0] debug_reg_rdata
+    ,output logic        debug_reg_error
+    ,input  logic        debug_mem_valid
+    ,input  logic        debug_mem_write
+    ,input  logic [31:0] debug_mem_addr
+    ,input  logic [31:0] debug_mem_wdata
+    ,input  logic [3:0]  debug_mem_wstrb
+    ,output logic        debug_mem_ready
+    ,output logic [31:0] debug_mem_rdata
+    ,output logic        debug_mem_error
+
     ,output logic        mmio_valid
     ,input  logic        mmio_ready
     ,output logic        mmio_write
@@ -108,6 +128,24 @@ module rv32im_cpu_subsystem #(
         ,.platform_interrupts      (platform_irqs)
         ,.external_timer_interrupt (timer_irq)
         ,.external_mtime_value     (mtime_value)
+        ,.debug_halt_req           (debug_halt_req)
+        ,.debug_resume_req         (debug_resume_req)
+        ,.debug_halted             (debug_halted)
+        ,.debug_reg_valid          (debug_reg_valid)
+        ,.debug_reg_write          (debug_reg_write)
+        ,.debug_regno              (debug_regno)
+        ,.debug_reg_wdata          (debug_reg_wdata)
+        ,.debug_reg_ready          (debug_reg_ready)
+        ,.debug_reg_rdata          (debug_reg_rdata)
+        ,.debug_reg_error          (debug_reg_error)
+        ,.debug_mem_valid          (debug_mem_valid)
+        ,.debug_mem_write          (debug_mem_write)
+        ,.debug_mem_addr           (debug_mem_addr)
+        ,.debug_mem_wdata          (debug_mem_wdata)
+        ,.debug_mem_wstrb          (debug_mem_wstrb)
+        ,.debug_mem_ready          (debug_mem_ready)
+        ,.debug_mem_rdata          (debug_mem_rdata)
+        ,.debug_mem_error          (debug_mem_error)
         // Coprocessor interface (unused)
         ,.cp_cmd_valid             (unused_cp_cmd_valid)
         ,.cp_cmd_ready             (1'b0)
