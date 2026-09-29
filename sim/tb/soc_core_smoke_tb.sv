@@ -10,6 +10,8 @@ module soc_core_smoke_tb;
     logic clk = 1'b0;
     logic rst = 1'b1;
     always #5 clk = ~clk;
+    logic jtag_tck = 1'b0, jtag_tms = 1'b1, jtag_tdi = 1'b0;
+    logic jtag_trst_n = 1'b0, jtag_tdo;
 
     logic mmio_valid;
     logic mmio_ready;
@@ -345,6 +347,18 @@ module soc_core_smoke_tb;
         mmio_read32(32'h1003_7000, mmio_wdata);
         check_condition(mmio_wdata == 32'h5541_5254,
                "Host UART ID register must be reachable through SoC MMIO");
+        mmio_read32(32'h1003_8000, mmio_wdata);
+        check_condition(mmio_wdata == 32'h4153_4C30,
+               "System Control ID must identify the ASL0 platform");
+        mmio_read32(32'h1003_800C, mmio_wdata);
+        check_condition(mmio_wdata == 32'h4010_1120,
+               "System Control MISA must report the frozen RV32IMF ISA");
+        mmio_read32(32'h1003_8010, mmio_wdata);
+        check_condition(mmio_wdata == 32'h0000_FFFF,
+               "System Control capabilities must match implemented hardware");
+        mmio_read32(32'h1003_8018, mmio_wdata);
+        check_condition(mmio_wdata == 32'h0000_0801,
+               "System Control topology must report eight IRQs and one hart");
         mmio_read32(32'h1003_501C, mmio_wdata);
         check_condition(mmio_wdata == 32'd110,
                "right-hand Protocol ID must default to 110");
@@ -361,7 +375,7 @@ module soc_core_smoke_tb;
         @(negedge clk);
         mmio_valid = 1'b1;
         mmio_write = 1'b0;
-        mmio_addr  = 32'h1003_8000;
+        mmio_addr  = 32'h1003_9000;
         #1;
         check_condition(mmio_ready && mmio_error,
                "unimplemented MMIO page must complete with an error response");

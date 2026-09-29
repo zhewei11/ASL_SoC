@@ -7,6 +7,8 @@ module core #(
     ,input         timer_interrupt
     ,input         wdt_interrupt
     ,input  [63:0] time_value
+    ,input         icache_miss_event
+    ,input         dcache_miss_event
 
     // IM Interface
     ,input         im_valid
@@ -26,6 +28,19 @@ module core #(
     ,output [31:0] dm_bit_en
     ,output [31:0] dm_addr
     ,output [31:0] dm_write_data
+
+    // RISC-V Debug Module hart interface.
+    ,input         debug_halt_req
+    ,input         debug_resume_req
+    ,output        debug_halted
+    ,output        debug_resume_event
+    ,input         debug_reg_valid
+    ,input         debug_reg_write
+    ,input  [15:0] debug_regno
+    ,input  [31:0] debug_reg_wdata
+    ,output        debug_reg_ready
+    ,output [31:0] debug_reg_rdata
+    ,output        debug_reg_error
 );
 
 
@@ -137,6 +152,19 @@ module core #(
     logic        ex_started_q;
     logic [4:0]  ex_fp_flags_q;
     logic        ex_fp_flags_valid_q;
+    logic        debug_halted_q;
+    logic        debug_halt_pending_q;
+    logic [31:0] debug_dcsr_q;
+    logic [31:0] debug_dpc_q;
+    logic [31:0] debug_dscratch0_q;
+    wire  [1:0]  current_privilege;
+    wire          pipeline_empty;
+    wire          debug_stop_fetch;
+    wire          debug_halt_enter;
+    wire [31:0]   debug_gpr_rdata;
+    wire          debug_gpr_selected;
+    wire          debug_csr_selected;
+    wire          debug_gpr_write;
 
     //=============================================
     //=                     IF                    =
@@ -157,8 +185,9 @@ module core #(
     wire         bp_resolve_en;
     wire [31:0]  bp_resolve_pc;
 
-    assign next_pc = flush ? actual_next_pc : predicted_next_pc;
-    assign pc_enable = fetch_accept || flush;
+    assign next_pc = debug_resume_event ? debug_dpc_q :
+                     flush ? actual_next_pc : predicted_next_pc;
+    assign pc_enable = debug_resume_event || fetch_accept || flush;
 
     // PC register
     pc_register u_pc_register (
@@ -187,7 +216,7 @@ module core #(
     // Use the registered PC for cache lookup to avoid combinational feedback
     // through the cache-valid and pipeline-stall paths.
     assign im_addr = {2'b0, pc[31:2]};
-    assign im_stall = !if_id_allow_in || wfi_active;
+    assign im_stall = !if_id_allow_in || wfi_active || debug_stop_fetch;
     assign im_flush = flush;
     assign im_access_allowed = fetch_access_allowed;
 
@@ -216,7 +245,7 @@ module core #(
 
     assign fetch_accept = (im_valid || !fetch_access_allowed) &&
                           if_id_allow_in &&
-                          !wfi_active && !flush;
+                          !wfi_active && !flush && !debug_stop_fetch;
 
     //=============================================
     //=                     ID                    =
@@ -386,6 +415,10 @@ module core #(
         ,.rd_write     (reg_mem_wb.rd)
         ,.write_enable (write_en_int)
         ,.write_data   (write_data)
+        ,.debug_addr         (debug_regno[4:0])
+        ,.debug_write_data   (debug_reg_wdata)
+        ,.debug_write_enable (debug_gpr_write)
+        ,.debug_read_data    (debug_gpr_rdata)
     );
 
     generate
@@ -635,7 +668,7 @@ module core #(
                               branch_actual_next_pc;
     assign flush            = trap_taken || mret_taken || branch_flush ||
                               fence_i_flush;
-    assign im_invalidate    = fence_i_flush;
+    assign im_invalidate    = fence_i_flush || debug_resume_event;
     assign bp_update_en     = reg_id_ex.valid && ex_is_bj && ex_fire;
     assign bp_update_pc     = reg_id_ex.pc;
     assign bp_update_taken  = branch_taken;
@@ -645,6 +678,21 @@ module core #(
     assign bp_update_type   = ex_is_call ? 2'b10 :
                               ex_is_ret  ? 2'b11 :
                               (ex_is_jal || ex_is_jalr) ? 2'b01 : 2'b00;
+
+    // Implementation-defined HPM event bitmap.  mhpmevent3..6 select one or
+    // more of these events, allowing RTOS firmware to profile the real core
+    // without a simulation-only hierarchical probe.
+    wire [7:0] hpm_events = {
+        ex_fire && ex_data_access && reg_id_ex.instr_nop &&
+            !pmp_data_access_fault,
+        trap_taken,
+        reg_id_ex.valid && !ex_fire && !wfi_active,
+        !fetch_accept && !flush && !wfi_active,
+        dcache_miss_event,
+        icache_miss_event,
+        branch_flush,
+        bp_update_en
+    };
 
     csr_registers #(
          .ENABLE_FPU (ENABLE_FPU)
@@ -677,14 +725,16 @@ module core #(
         ,.data_access          (ex_data_access)
         ,.data_write           (ex_data_write)
         ,.data_access_bytes    (ex_data_access_bytes)
-        ,.dma_interrupt        (dma_interrupt)
-        ,.timer_interrupt      (timer_interrupt)
-        ,.wdt_interrupt        (wdt_interrupt)
+        ,.dma_interrupt        (dma_interrupt && !debug_stop_fetch)
+        ,.timer_interrupt      (timer_interrupt && !debug_stop_fetch)
+        ,.wdt_interrupt        (wdt_interrupt && !debug_stop_fetch)
         ,.time_value           (time_value)
+        ,.hpm_events           (hpm_events)
         ,.fp_flags_valid    (ex_commit_fp_flags_valid && ex_fire &&
                              reg_id_ex.instr_nop)
         ,.fp_flags             (ex_commit_fp_flags)
         ,.fp_state_dirty       (write_en_float)
+        ,.debug_halt           (debug_halt_enter)
         //output
         ,.csr_read_data        (csr_read_data)
         ,.redirect_pc          (csr_redirect_pc)
@@ -695,7 +745,7 @@ module core #(
         ,.fp_enabled           (fp_enabled)
         ,.fetch_access_allowed (fetch_access_allowed)
         ,.data_access_allowed  (data_access_allowed)
-        ,.current_privilege    ()
+        ,.current_privilege    (current_privilege)
     );
 
     //     mux
@@ -848,5 +898,72 @@ module core #(
     assign write_en_float = reg_mem_wb.valid && reg_mem_wb.reg_write &&
                              reg_mem_wb.is_float;
     assign write_data     = reg_mem_wb.write_back_data;
+
+    // =============================================
+    // RISC-V external debug run control
+    // =============================================
+    // Stop admitting new instructions immediately, then enter Debug Mode only
+    // after every accepted instruction and memory transaction has retired.
+    assign pipeline_empty = !reg_if_id.valid && !reg_id_ex.valid &&
+                            !reg_ex_mem.valid && !reg_mem_wb.valid &&
+                            !ex_result_pending_q && !ex_started_q;
+    assign debug_stop_fetch = debug_halted_q || debug_halt_pending_q ||
+                              debug_halt_req;
+    assign debug_halt_enter = !debug_halted_q &&
+                              (debug_halt_pending_q || debug_halt_req) &&
+                              pipeline_empty;
+    assign debug_resume_event = debug_halted_q && debug_resume_req;
+    assign debug_halted = debug_halted_q;
+
+    assign debug_gpr_selected = (debug_regno[15:5] == 11'b000_1000_0000);
+    assign debug_csr_selected = (debug_regno == 16'h07b0) ||
+                                (debug_regno == 16'h07b1) ||
+                                (debug_regno == 16'h07b2);
+    assign debug_reg_ready = debug_halted_q && debug_reg_valid;
+    assign debug_reg_error = debug_reg_ready &&
+                             !debug_gpr_selected && !debug_csr_selected;
+    assign debug_reg_rdata = debug_gpr_selected ? debug_gpr_rdata :
+                             (debug_regno == 16'h07b0) ? debug_dcsr_q :
+                             (debug_regno == 16'h07b1) ? debug_dpc_q :
+                             (debug_regno == 16'h07b2) ? debug_dscratch0_q :
+                             32'd0;
+    assign debug_gpr_write = debug_reg_ready && debug_reg_write &&
+                             debug_gpr_selected;
+
+    always_ff @(posedge clk or posedge rst) begin : debug_run_control
+        if (rst) begin
+            debug_halted_q      <= 1'b0;
+            debug_halt_pending_q <= 1'b0;
+            debug_dcsr_q        <= 32'h4000_0003;
+            debug_dpc_q         <= 32'd0;
+            debug_dscratch0_q   <= 32'd0;
+        end else begin
+            if (!debug_halted_q && debug_halt_req)
+                debug_halt_pending_q <= 1'b1;
+
+            if (debug_halt_enter) begin
+                debug_halted_q       <= 1'b1;
+                debug_halt_pending_q <= 1'b0;
+                debug_dpc_q          <= {pc[31:2], 2'b00};
+                // debugver=4 (Debug Spec 1.0), cause=3 (haltreq).
+                debug_dcsr_q         <= 32'h4000_00c0 |
+                                        {30'd0, current_privilege};
+            end
+
+            if (debug_resume_event) begin
+                debug_halted_q       <= 1'b0;
+                debug_halt_pending_q <= 1'b0;
+            end
+
+            if (debug_reg_ready && debug_reg_write) begin
+                // Unsupported optional dcsr features are WARL-zero. dpc and
+                // dscratch0 are fully writable for debugger run control.
+                if (debug_regno == 16'h07b1)
+                    debug_dpc_q <= {debug_reg_wdata[31:2], 2'b00};
+                else if (debug_regno == 16'h07b2)
+                    debug_dscratch0_q <= debug_reg_wdata;
+            end
+        end
+    end
 
 endmodule

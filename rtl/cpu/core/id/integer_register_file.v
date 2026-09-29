@@ -13,6 +13,12 @@ module integer_register_file (
     ,input      [4:0]   rd_write
     ,input      [31:0]  write_data
     ,input              write_enable
+    // Halted-hart abstract debug port. Debug writes have priority because the
+    // normal pipeline is empty before debug_halted is asserted.
+    ,input      [4:0]   debug_addr
+    ,input      [31:0]  debug_write_data
+    ,input              debug_write_enable
+    ,output     [31:0]  debug_read_data
 );
 
 
@@ -21,6 +27,8 @@ module integer_register_file (
     assign read_data1 = (rs1 == 5'd0) ? 32'h0 : registers[rs1];
     assign read_data2 = (rs2 == 5'd0) ? 32'h0 : registers[rs2];
     assign read_data3 = (rd_read == 5'd0)  ? 32'h0 : registers[rd_read];
+    assign debug_read_data = (debug_addr == 5'd0) ? 32'h0 :
+                             registers[debug_addr];
 
 
     integer i;
@@ -28,6 +36,9 @@ module integer_register_file (
         if (rst) begin
             for (i = 0; i < 32; i = i + 1)
                 registers[i] <= 32'h0;
+        end
+        else if (debug_write_enable && debug_addr != 5'd0) begin
+            registers[debug_addr] <= debug_write_data;
         end
         else if (write_enable && rd_write != 5'd0) begin
             registers[rd_write] <= write_data;

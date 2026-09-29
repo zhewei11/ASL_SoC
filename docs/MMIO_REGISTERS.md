@@ -1,7 +1,17 @@
 # SoC MMIO Registers
 
-所有request都使用32-bit byte address。Master必須保持`valid/address/write/wdata/wstrb`
-直到`ready`；未實作的page會在同cycle完成並assert`mmio_error`，不會誤寫其他周邊。
+所有request都使用32-bit byte address。以下規則是Platform ABI 1.0的固定access semantics：
+
+- Register是little-endian、32-bit且必須4-byte aligned；firmware只使用自然對齊的32-bit存取。
+- Master必須保持`valid/address/write/wdata/wstrb`直到`ready`；每次`valid && ready`只完成一筆交易。
+- `wstrb[3:0]`分別控制`wdata[31:24]`至`wdata[7:0]`的四個byte lane；RW register保留未被
+  strobe選中的byte。WO pulse或W1C欄位只採用其所在byte lane。
+- RO register寫入與合法page內未定義offset的寫入都忽略；合法page內未定義offset讀回0。
+- 未實作page在同cycle完成、讀回0並assert`mmio_error`，不會誤寫其他周邊。內部CPU目前
+  不把`mmio_error`轉成exception，因此firmware不得用未實作page探測功能，必須讀System
+  Control capability bits。
+- 除明確標示W1P、W1C或read-to-consume的register外，讀取沒有side effect。跨周邊或DMA
+  ownership交接需要嚴格排序時，firmware使用`fence iorw, iorw`。
 
 ## Local Interrupt Controller — `0x1003_1000`
 
@@ -20,8 +30,21 @@
 | `0x044` | PENDING_CLEAR | WO | Software-clear mask |
 | `0x048` | IN_SERVICE | RO | Claimed source mask |
 
-Source 1–8依序為Ethernet frame、CNN、Protocol、Host UART、watchdog、Safety、
-Pose-to-Protocol error與Ethernet frame error。相同priority時，最低source ID優先。
+固定source ID如下。這些數值是firmware ABI，後續不得重新編號；若來源被移除，ID保留。
+
+| ID | Source | Reset trigger mode |
+|---:|---|---|
+| 1 | Ethernet frame | edge |
+| 2 | CNN | level |
+| 3 | Protocol 2.0 | level |
+| 4 | Host UART | level |
+| 5 | Watchdog | level |
+| 6 | Safety | level |
+| 7 | Pose-to-Protocol error | level |
+| 8 | Ethernet frame error | edge |
+
+相同priority時最低source ID優先。CPU的`mcause`仍是Machine External Interrupt；實際來源必須
+讀`CLAIM_COMPLETE`取得，服務完成後把同一ID寫回。
 
 ## CNN — `0x1003_2000`
 
@@ -112,6 +135,32 @@ Software控制只能增加限制，不能覆蓋`emergency_stop_n`或`external_fa
 | `0x018` | IRQ_STATUS | RW1C | bit0 TX done、bit1 RX valid、bit2 framing/overrun |
 
 UART使用8-N-1，支援RX雙級同步、framing error、保留最舊byte的overrun行為及IRQ。
+
+## System Control／版本能力 — `0x1003_8000`
+
+此page全部為RO。它描述目前bitstream真正實作的能力，不用來表示尚未完成的roadmap。
+
+| Offset | Name | Access | Description |
+|---:|---|---|---|
+| `0x000` | SYSTEM_ID | RO | `0x41534C30` (`ASL0`) |
+| `0x004` | PLATFORM_ABI_VERSION | RO | bits31:16 major、bits15:0 minor；目前1.0 |
+| `0x008` | RTL_VERSION | RO | bits31:16 major、bits15:0 minor；目前1.1（加入external debug） |
+| `0x00C` | MISA | RO | 固定`0x40101120`，即RV32IMF加U-mode，A/C bit為0 |
+| `0x010` | CAPABILITIES0 | RO | 已實作能力bit map，見下表 |
+| `0x014` | CPU_HZ | RO | CPU clock frequency，預設100,000,000 |
+| `0x018` | TOPOLOGY | RO | bits15:8 IRQ source count、bits7:0 hart count |
+| `0x01C` | BUILD_ID | RO | 可重現release/build識別；開發版預設0 |
+
+`CAPABILITIES0`：
+
+| Bit | Capability |
+|---:|---|
+| 0–6 | RV32I、M、F、U-mode、PMP、HPM、L1 cache |
+| 7 | RISC-V External Debug 1.0最小組態（JTAG DTM、halt/resume、abstract register/memory） |
+| 8–15 | Protocol 2.0、LIC、Machine Timer、Host UART、Ethernet DMA、CNN、Pose、Safety |
+
+目前值為`0x0000_FFFF`。軟體應以bit測試能力，不應用版本號推測單項功能。bit 7不代表
+Program Buffer、SBA、trigger或single-step；debugger應先讀`abstractcs`與各標準能力欄位。
 
 Protocol 2.0 register page位於`0x1003_0000`，register ABI沿用既有
 [`fw/include/protocol2_mmio.h`](../fw/include/protocol2_mmio.h)，不需引用外部專案header。

@@ -28,7 +28,18 @@ class ConfigValidationTest(unittest.TestCase):
         values = generate_config.validate_config(copy.deepcopy(self.valid))
         self.assertEqual(values["RT_FRAME_CYCLES"], 100_000)
         self.assertEqual(values["DMA_MAX_BURST_BEATS"], 16)
-        self.assertEqual(len(values), 43)
+        self.assertEqual(values["CPU_MISA"], 0x40101120)
+        self.assertEqual(values["SYSTEM_CONTROL_MMIO_BASE"], 0x10038000)
+        self.assertEqual(len(values), 60)
+
+    def test_cpu_isa_contract(self):
+        self.rejected(self.changed("cpu", "isa", "RV32IMAFDC"),
+                      "frozen to RV32IMF")
+
+    def test_interrupt_id_contract(self):
+        cfg = self.changed("interrupts", "cnn", 3)
+        cfg["interrupts"]["protocol"] = 2
+        self.rejected(cfg, "mapping is frozen")
 
     def test_dma_burst_power_of_two(self):
         self.rejected(self.changed("dma", "max_burst_beats", 17),

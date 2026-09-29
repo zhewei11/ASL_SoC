@@ -15,7 +15,6 @@ module soc_core_top #(
     ,parameter int unsigned HOST_UART_BAUD = `ASL_SOC_UART_BAUD
     ,parameter int unsigned RT_FRAME_CYCLES_OVERRIDE = 0
     ,parameter bit ENABLE_CPU = 1'b1
-    ,parameter bit ENABLE_CPU_FPU = 1'b1
     // CPU/RTOS is the sole Protocol command-bank producer in the revised
     // architecture. Set to 0 only for the autonomous hardware Pose Adapter
     // compatibility path or its directed verification.
@@ -34,7 +33,14 @@ module soc_core_top #(
      input  logic        clk
     ,input  logic        rst
 
-    // External verification/debug MMIO requester. It owns MMIO only when
+    // RISC-V External Debug Support v1.0 JTAG transport.
+    ,input  logic        jtag_tck
+    ,input  logic        jtag_tms
+    ,input  logic        jtag_tdi
+    ,input  logic        jtag_trst_n
+    ,output logic        jtag_tdo
+
+    // External verification MMIO requester. It owns MMIO only when
     // ENABLE_CPU=0; normal SoC builds use the internal RV32IMF CPU.
     ,input  logic        mmio_valid
     ,output logic        mmio_ready
@@ -324,6 +330,37 @@ module soc_core_top #(
     logic [31:0] cpu_mmio_rdata;
     logic [3:0]  cpu_mmio_wstrb;
 
+    // Standard JTAG DTM, DMI and single-hart Debug Module signals.
+    logic        debug_dmi_valid;
+    logic        debug_dmi_write;
+    logic [6:0]  debug_dmi_addr;
+    logic [31:0] debug_dmi_wdata;
+    logic        debug_dmi_ready;
+    logic [31:0] debug_dmi_rdata;
+    logic [1:0]  debug_dmi_resp;
+    logic        debug_dm_hard_reset;
+    logic        debug_ndmreset;
+    logic        debug_hart_reset_status;
+    logic        system_rst;
+    logic        debug_halt_req;
+    logic        debug_resume_req;
+    logic        debug_halted;
+    logic        debug_reg_valid;
+    logic        debug_reg_write;
+    logic [15:0] debug_regno;
+    logic [31:0] debug_reg_wdata;
+    logic        debug_reg_ready;
+    logic [31:0] debug_reg_rdata;
+    logic        debug_reg_error;
+    logic        debug_mem_valid;
+    logic        debug_mem_write;
+    logic [31:0] debug_mem_addr;
+    logic [31:0] debug_mem_wdata;
+    logic [3:0]  debug_mem_wstrb;
+    logic        debug_mem_ready;
+    logic [31:0] debug_mem_rdata;
+    logic        debug_mem_error;
+
     // MMIO bus selected between the CPU and verification requester.
     logic        bus_mmio_valid;
     logic        bus_mmio_ready;
@@ -414,6 +451,15 @@ module soc_core_top #(
     logic [63:0] machine_time;
     logic        ethernet_frame_buffer_held;
 
+    assign system_rst = rst || debug_ndmreset;
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)
+            debug_hart_reset_status <= 1'b1;
+        else
+            debug_hart_reset_status <= debug_ndmreset || !ENABLE_CPU;
+    end
+
     // initial begin
     //     if (CPU_HZ == 0 || RT_FRAME_HZ == 0)
     //         $error("CPU_HZ and RT_FRAME_HZ must be non-zero");
@@ -444,16 +490,70 @@ module soc_core_top #(
     assign mmio_rdata = bus_mmio_rdata;
     assign mmio_error = !ENABLE_CPU && bus_mmio_error;
 
-    assign local_irq_sources = {
-        frame_error,
-        pose_protocol_error,
-        safety_fault_latched,
-        watchdog_fault,
-        host_uart_irq,
-        protocol_irq,
-        cnn_irq,
-        ethernet_frame_irq
-    };
+    riscv_jtag_dtm u_riscv_jtag_dtm (
+         .clk           (clk)
+        ,.rst           (rst)
+        ,.jtag_tck      (jtag_tck)
+        ,.jtag_tms      (jtag_tms)
+        ,.jtag_tdi      (jtag_tdi)
+        ,.jtag_trst_n   (jtag_trst_n)
+        ,.jtag_tdo      (jtag_tdo)
+        ,.dmi_valid     (debug_dmi_valid)
+        ,.dmi_write     (debug_dmi_write)
+        ,.dmi_addr      (debug_dmi_addr)
+        ,.dmi_wdata     (debug_dmi_wdata)
+        ,.dmi_ready     (debug_dmi_ready)
+        ,.dmi_rdata     (debug_dmi_rdata)
+        ,.dmi_resp      (debug_dmi_resp)
+        ,.dm_hard_reset (debug_dm_hard_reset)
+    );
+
+    riscv_debug_module u_riscv_debug_module (
+         .clk             (clk)
+        ,.rst             (rst || debug_dm_hard_reset)
+        ,.dmi_valid       (debug_dmi_valid)
+        ,.dmi_write       (debug_dmi_write)
+        ,.dmi_addr        (debug_dmi_addr)
+        ,.dmi_wdata       (debug_dmi_wdata)
+        ,.dmi_ready       (debug_dmi_ready)
+        ,.dmi_rdata       (debug_dmi_rdata)
+        ,.dmi_resp        (debug_dmi_resp)
+        ,.hart_halt_req   (debug_halt_req)
+        ,.hart_resume_req (debug_resume_req)
+        ,.hart_halted     (debug_halted)
+        ,.hart_reset      (debug_hart_reset_status)
+        ,.ndmreset        (debug_ndmreset)
+        ,.hart_reg_valid  (debug_reg_valid)
+        ,.hart_reg_write  (debug_reg_write)
+        ,.hart_regno      (debug_regno)
+        ,.hart_reg_wdata  (debug_reg_wdata)
+        ,.hart_reg_ready  (debug_reg_ready)
+        ,.hart_reg_rdata  (debug_reg_rdata)
+        ,.hart_reg_error  (debug_reg_error)
+        ,.hart_mem_valid  (debug_mem_valid)
+        ,.hart_mem_write  (debug_mem_write)
+        ,.hart_mem_addr   (debug_mem_addr)
+        ,.hart_mem_wdata  (debug_mem_wdata)
+        ,.hart_mem_wstrb  (debug_mem_wstrb)
+        ,.hart_mem_ready  (debug_mem_ready)
+        ,.hart_mem_rdata  (debug_mem_rdata)
+        ,.hart_mem_error  (debug_mem_error)
+    );
+
+    // These source IDs are a firmware ABI. Keep the explicit generated-ID
+    // mapping instead of relying on concatenation order.
+    assign local_irq_sources[(`ASL_SOC_IRQ_ID_ETHERNET - 1)] =
+        ethernet_frame_irq;
+    assign local_irq_sources[(`ASL_SOC_IRQ_ID_CNN - 1)] = cnn_irq;
+    assign local_irq_sources[(`ASL_SOC_IRQ_ID_PROTOCOL - 1)] = protocol_irq;
+    assign local_irq_sources[(`ASL_SOC_IRQ_ID_HOST_UART - 1)] = host_uart_irq;
+    assign local_irq_sources[(`ASL_SOC_IRQ_ID_WATCHDOG - 1)] = watchdog_fault;
+    assign local_irq_sources[(`ASL_SOC_IRQ_ID_SAFETY - 1)] =
+        safety_fault_latched;
+    assign local_irq_sources[(`ASL_SOC_IRQ_ID_POSE_PROTOCOL - 1)] =
+        pose_protocol_error;
+    assign local_irq_sources[(`ASL_SOC_IRQ_ID_ETHERNET_ERROR - 1)] =
+        frame_error;
 
     local_interrupt_controller #(
          .NUM_SOURCES  (8)
@@ -461,7 +561,7 @@ module soc_core_top #(
         ,.RESET_EDGE   (8'h81)
     ) u_local_interrupt_controller (
          .clk                (clk)
-        ,.rst                (rst)
+        ,.rst                (system_rst)
         ,.irq_sources        (local_irq_sources)
         ,.mmio_valid         (interrupt_mmio_valid)
         ,.mmio_ready         (interrupt_mmio_ready)
@@ -476,7 +576,7 @@ module soc_core_top #(
 
     machine_timer #(.BASE_ADDRESS(`ASL_SOC_TIMER_MMIO_BASE)) u_machine_timer (
          .clk             (clk)
-        ,.rst             (rst)
+        ,.rst             (system_rst)
         ,.mmio_valid      (timer_mmio_valid)
         ,.mmio_ready      (timer_mmio_ready)
         ,.mmio_write      (timer_mmio_write)
@@ -589,16 +689,34 @@ module soc_core_top #(
          .BOOT_ROM_INIT_FILE (BOOT_ROM_INIT_FILE)
         ,.ITCM_INIT_FILE     (ITCM_INIT_FILE)
         ,.DTCM_INIT_FILE     (DTCM_INIT_FILE)
-        ,.ENABLE_FPU         (ENABLE_CPU_FPU)
+        ,.ENABLE_FPU         (1'b1)
     ) u_soc_cpu_cluster (
          .clk           (clk)
-        ,.rst           (rst || !ENABLE_CPU)
+        ,.rst           (system_rst || !ENABLE_CPU)
         ,.dma_irq       (local_external_irq)
         ,.protocol_irq  (1'b0)
         ,.watchdog_irq  (1'b0)
         ,.platform_irqs (4'd0)
         ,.timer_irq     (machine_timer_irq)
         ,.mtime_value   (machine_time)
+        ,.debug_halt_req   (debug_halt_req)
+        ,.debug_resume_req (debug_resume_req)
+        ,.debug_halted     (debug_halted)
+        ,.debug_reg_valid  (debug_reg_valid)
+        ,.debug_reg_write  (debug_reg_write)
+        ,.debug_regno      (debug_regno)
+        ,.debug_reg_wdata  (debug_reg_wdata)
+        ,.debug_reg_ready  (debug_reg_ready)
+        ,.debug_reg_rdata  (debug_reg_rdata)
+        ,.debug_reg_error  (debug_reg_error)
+        ,.debug_mem_valid  (debug_mem_valid)
+        ,.debug_mem_write  (debug_mem_write)
+        ,.debug_mem_addr   (debug_mem_addr)
+        ,.debug_mem_wdata  (debug_mem_wdata)
+        ,.debug_mem_wstrb  (debug_mem_wstrb)
+        ,.debug_mem_ready  (debug_mem_ready)
+        ,.debug_mem_rdata  (debug_mem_rdata)
+        ,.debug_mem_error  (debug_mem_error)
         ,.mmio_valid    (cpu_mmio_valid)
         ,.mmio_ready    (cpu_mmio_ready)
         ,.mmio_write    (cpu_mmio_write)
@@ -652,7 +770,7 @@ module soc_core_top #(
 
     axi4_4x1_arbiter u_external_axi_arbiter (
          .clk               (clk)
-        ,.rst               (rst)
+        ,.rst               (system_rst)
         ,.s_axi_awid        (fabric_awid)
         ,.s_axi_awaddr      (fabric_awaddr)
         ,.s_axi_awlen       (fabric_awlen)
@@ -719,7 +837,7 @@ module soc_core_top #(
          .DEFAULT_POSE_MAX_STEP (POSE_MAX_STEP)
     ) u_soc_mmio_subsystem (
          .clk                        (clk)
-        ,.rst                        (rst)
+        ,.rst                        (system_rst)
         ,.mmio_valid                 (bus_mmio_valid)
         ,.mmio_ready                 (bus_mmio_ready)
         ,.mmio_write                 (bus_mmio_write)
@@ -831,7 +949,7 @@ module soc_core_top #(
         ,.USE_HX5_RT_SEQUENCER    (USE_HX5_RT_SEQUENCER)
     ) u_protocol2_mmio_wrapper (
          .clk            (clk)
-        ,.rst            (rst)
+        ,.rst            (system_rst)
         ,.frame_tick     (rt_frame_tick_pulse)
         ,.external_abort (safety_fault_latched)
         ,.mmio_valid     (protocol_bus_valid)
@@ -852,7 +970,7 @@ module soc_core_top #(
         ,.BAUD_RATE (HOST_UART_BAUD)
     ) u_host_uart_mmio (
          .clk        (clk)
-        ,.rst        (rst)
+        ,.rst        (system_rst)
         ,.mmio_valid (uart_mmio_valid)
         ,.mmio_ready (uart_mmio_ready)
         ,.mmio_write (uart_mmio_write)
@@ -869,7 +987,7 @@ module soc_core_top #(
          .WATCHDOG_TIMEOUT_CYCLES (WATCHDOG_TIMEOUT_CYCLES)
     ) u_safety_supervisor (
          .clk                  (clk)
-        ,.rst                  (rst)
+        ,.rst                  (system_rst)
         ,.emergency_stop_n     (emergency_stop_n)
         ,.external_fault       (external_fault)
         ,.torque_enable_request(torque_enable_request &&
@@ -891,7 +1009,7 @@ module soc_core_top #(
         ,.MAX_BURST_BEATS   (DMA_MAX_BURST_BEATS)
     ) u_axi_multichannel_burst_dma (
          .clk                    (clk)
-        ,.rst                    (rst)
+        ,.rst                    (system_rst)
         ,.s2mm_valid             (eth_rx_valid)
         ,.s2mm_data              (eth_rx_data)
         ,.s2mm_keep              (eth_rx_keep)
@@ -963,7 +1081,7 @@ module soc_core_top #(
         ,.LATENCY_CYCLES (CNN_STUB_LATENCY_CYCLES)
     ) u_cnn_accelerator_stub (
          .clk               (clk)
-        ,.rst               (rst)
+        ,.rst               (system_rst)
         ,.start             (cnn_start_selected)
         ,.input_address     (cnn_input_address_selected)
         ,.input_bytes       (cnn_input_bytes_selected)
@@ -993,7 +1111,7 @@ module soc_core_top #(
          .FRAME_CYCLES (RT_FRAME_CYCLES)
     ) u_rt_frame_tick (
          .clk  (clk)
-        ,.rst  (rst)
+        ,.rst  (system_rst)
         ,.tick (rt_frame_tick_pulse)
     );
 
@@ -1022,7 +1140,7 @@ module soc_core_top #(
                 ,.PROTOCOL_BASE (`ASL_SOC_PROTOCOL2_MMIO_BASE)
             ) u_pose_protocol_command_adapter (
                  .clk                       (clk)
-                ,.rst                       (rst)
+                ,.rst                       (system_rst)
                 ,.pose_valid                (protocol_command_valid)
                 ,.pose_ready                (pose_adapter_ready)
                 ,.pose_motor_index          (protocol_motor_index)
@@ -1061,7 +1179,7 @@ module soc_core_top #(
         ,.DEFAULT_PROFILE_VELOCITY     (POSE_PROFILE_VELOCITY)
     ) u_pose_player (
          .clk                          (clk)
-        ,.rst                          (rst)
+        ,.rst                          (system_rst)
         ,.frame_tick                   (rt_frame_tick_pulse)
         ,.safety_allow                 (torque_enable_allow)
         ,.target_valid                 (pose_target_valid_selected)

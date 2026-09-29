@@ -107,6 +107,7 @@ module soc_mmio_subsystem #(
     localparam logic [3:0] PAGE_POSE     = 4'h5;
     localparam logic [3:0] PAGE_SAFETY   = 4'h6;
     localparam logic [3:0] PAGE_UART     = 4'h7;
+    localparam logic [3:0] PAGE_SYSTEM   = 4'h8;
 
     logic        address_in_window;
     logic [3:0]  page;
@@ -188,7 +189,7 @@ module soc_mmio_subsystem #(
                        (page == PAGE_CNN) ||
                        (page == PAGE_ETH) || (page == PAGE_POSE) ||
                        (page == PAGE_TIMER) || (page == PAGE_SAFETY) ||
-                       (page == PAGE_UART)));
+                       (page == PAGE_UART) || (page == PAGE_SYSTEM)));
         if (protocol_select) begin
             mmio_rdata = protocol_rdata;
         end else if (interrupt_select) begin
@@ -249,6 +250,19 @@ module soc_mmio_subsystem #(
                         30'd0, software_watchdog_enable,
                         software_torque_request
                     };
+                    default: mmio_rdata = 32'd0;
+                endcase
+                PAGE_SYSTEM: case (page_offset)
+                    12'h000: mmio_rdata = `ASL_SOC_SYSTEM_ID;
+                    12'h004: mmio_rdata = `ASL_SOC_PLATFORM_ABI_VERSION;
+                    12'h008: mmio_rdata = `ASL_SOC_RTL_VERSION;
+                    12'h00C: mmio_rdata = `ASL_SOC_CPU_MISA;
+                    12'h010: mmio_rdata = `ASL_SOC_CAPABILITIES0;
+                    12'h014: mmio_rdata = `ASL_SOC_CPU_HZ;
+                    12'h018: mmio_rdata =
+                        (`ASL_SOC_IRQ_SOURCE_COUNT << 8) |
+                        `ASL_SOC_CPU_HART_COUNT;
+                    12'h01C: mmio_rdata = `ASL_SOC_BUILD_ID;
                     default: mmio_rdata = 32'd0;
                 endcase
                 default: mmio_rdata = 32'd0;

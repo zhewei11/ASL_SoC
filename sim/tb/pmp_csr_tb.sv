@@ -1,6 +1,7 @@
 `timescale 1ns/1ps
 
 module pmp_csr_tb;
+    logic debug_halt = 1'b0;
     logic clk;
     logic rst;
     logic execute;
@@ -28,6 +29,7 @@ module pmp_csr_tb;
     logic timer_interrupt;
     logic wdt_interrupt;
     logic [63:0] time_value;
+    logic [7:0] hpm_events;
     logic fp_flags_valid;
     logic [4:0] fp_flags;
     logic fp_state_dirty;
@@ -154,6 +156,7 @@ module pmp_csr_tb;
         timer_interrupt = 1'b0;
         wdt_interrupt = 1'b0;
         time_value = 64'd0;
+        hpm_events = 8'd0;
         fp_flags_valid = 1'b0;
         fp_flags = 5'd0;
         fp_state_dirty = 1'b0;

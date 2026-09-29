@@ -7,6 +7,8 @@ module soc_freertos_boot_tb;
     logic clk = 1'b0;
     logic rst = 1'b1;
     always #5 clk = ~clk;
+    logic jtag_tck = 1'b0, jtag_tms = 1'b1, jtag_tdi = 1'b0;
+    logic jtag_trst_n = 1'b0, jtag_tdo;
 
     logic mmio_valid = 0, mmio_ready, mmio_write = 0, mmio_error;
     logic [31:0] mmio_addr = 0, mmio_wdata = 0, mmio_rdata;

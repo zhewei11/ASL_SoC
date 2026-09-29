@@ -14,6 +14,7 @@ module L1C_data (
     ,input  logic         core_stall
     ,output logic         core_valid
     ,output logic [31:0]  core_out
+    ,output logic         read_miss_event
 
     // Memory read interface
     ,output logic         mem_read_req
@@ -172,6 +173,11 @@ module L1C_data (
 
     assign mem_read_req  = (state == READ_REQUEST);
     assign mem_read_addr = {request_addr_q[29:2], 4'b0000};
+
+    // Stores are write-through/non-allocate and are deliberately excluded.
+    // This pulse therefore represents a demand load which needs a refill.
+    assign read_miss_event = (state == CACHE_IDLE) && core_req &&
+                             !core_write && !invalidate && !hit;
 
     assign mem_write_req  = (state == WRITE_REQUEST);
     assign mem_write_addr = {request_addr_q[29:0], 2'b00};

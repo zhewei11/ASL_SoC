@@ -44,9 +44,12 @@ def validate_config(cfg: dict) -> dict[str, int]:
         raise ValueError("schema_version must be 1")
 
     clock = cfg["clock"]
+    cpu = cfg["cpu"]
+    system = cfg["system"]
     memory = cfg["memory"]
     dma_config = cfg["dma"]
     mmio = cfg["mmio"]
+    interrupts = cfg["interrupts"]
     eth = cfg["ethernet"]
     cnn = cfg["cnn"]
     hand = cfg["hand"]
@@ -57,6 +60,26 @@ def validate_config(cfg: dict) -> dict[str, int]:
     frame_hz = number(clock["rt_frame_hz"])
     if cpu_hz <= 0 or frame_hz <= 0 or cpu_hz % frame_hz:
         raise ValueError("cpu_hz must be an integer multiple of rt_frame_hz")
+
+    if cpu["isa"] != "RV32IMF":
+        raise ValueError("the production CPU ISA is frozen to RV32IMF")
+    if number(cpu["misa"]) != 0x40101120:
+        raise ValueError("RV32IMF misa must be 0x40101120 (A and C excluded)")
+    if number(cpu["hart_count"]) != 1:
+        raise ValueError("the current platform supports exactly one hart")
+    if number(system["system_id"]) != 0x41534C30:
+        raise ValueError("system_id is frozen to ASL0")
+    if not (number(system["capabilities0"]) & (1 << 7)):
+        raise ValueError("the implemented RISC-V Debug capability bit must remain set")
+
+    irq_names = (
+        "ethernet", "cnn", "protocol", "host_uart", "watchdog",
+        "safety", "pose_protocol", "ethernet_error",
+    )
+    irq_count = number(interrupts["source_count"])
+    irq_ids = [number(interrupts[name]) for name in irq_names]
+    if irq_count != 8 or irq_ids != list(range(1, irq_count + 1)):
+        raise ValueError("interrupt ID mapping is frozen to the documented 1..8 order")
 
     boot = region(number(memory["boot_rom_base"]),
                   number(memory["boot_rom_bytes"]), "boot_rom")
@@ -88,6 +111,7 @@ def validate_config(cfg: dict) -> dict[str, int]:
     for key in (
         "protocol2_base", "interrupt_base", "cnn_base", "ethernet_base",
         "timer_base", "pose_base", "safety_base", "uart_base",
+        "system_control_base",
     ):
         address = number(mmio[key])
         page_addresses.append(address)
@@ -130,6 +154,13 @@ def validate_config(cfg: dict) -> dict[str, int]:
         "CPU_HZ": cpu_hz,
         "RT_FRAME_HZ": frame_hz,
         "RT_FRAME_CYCLES": cpu_hz // frame_hz,
+        "CPU_MISA": number(cpu["misa"]),
+        "CPU_HART_COUNT": number(cpu["hart_count"]),
+        "SYSTEM_ID": number(system["system_id"]),
+        "PLATFORM_ABI_VERSION": number(system["platform_abi_version"]),
+        "RTL_VERSION": number(system["rtl_version"]),
+        "CAPABILITIES0": number(system["capabilities0"]),
+        "BUILD_ID": number(system["build_id"]),
         "BOOT_ROM_BASE": boot[0],
         "BOOT_ROM_BYTES": boot[1],
         "ITCM_BASE": itcm[0],
@@ -153,6 +184,16 @@ def validate_config(cfg: dict) -> dict[str, int]:
         "POSE_MMIO_BASE": number(mmio["pose_base"]),
         "SAFETY_MMIO_BASE": number(mmio["safety_base"]),
         "UART_MMIO_BASE": number(mmio["uart_base"]),
+        "SYSTEM_CONTROL_MMIO_BASE": number(mmio["system_control_base"]),
+        "IRQ_SOURCE_COUNT": irq_count,
+        "IRQ_ID_ETHERNET": number(interrupts["ethernet"]),
+        "IRQ_ID_CNN": number(interrupts["cnn"]),
+        "IRQ_ID_PROTOCOL": number(interrupts["protocol"]),
+        "IRQ_ID_HOST_UART": number(interrupts["host_uart"]),
+        "IRQ_ID_WATCHDOG": number(interrupts["watchdog"]),
+        "IRQ_ID_SAFETY": number(interrupts["safety"]),
+        "IRQ_ID_POSE_PROTOCOL": number(interrupts["pose_protocol"]),
+        "IRQ_ID_ETHERNET_ERROR": number(interrupts["ethernet_error"]),
         "ETH_STREAM_WIDTH": number(eth["stream_width"]),
         "ETH_FRAME_BUFFER_BASE": number(eth["frame_buffer_base"]),
         "ETH_MAX_FRAME_BYTES": number(eth["max_frame_bytes"]),

@@ -4,6 +4,18 @@
     "cpu_hz": 100000000,
     "rt_frame_hz": 1000
   },
+  "cpu": {
+    "isa": "RV32IMF",
+    "misa": "0x40101120",
+    "hart_count": 1
+  },
+  "system": {
+    "system_id": "0x41534C30",
+    "platform_abi_version": "0x00010000",
+    "rtl_version": "0x00010001",
+    "capabilities0": "0x0000FFFF",
+    "build_id": "0x00000000"
+  },
   "memory": {
     "boot_rom_base": "0x00000000",
     "boot_rom_bytes": 8192,
@@ -31,7 +43,19 @@
     "timer_base": "0x10034000",
     "pose_base": "0x10035000",
     "safety_base": "0x10036000",
-    "uart_base": "0x10037000"
+    "uart_base": "0x10037000",
+    "system_control_base": "0x10038000"
+  },
+  "interrupts": {
+    "source_count": 8,
+    "ethernet": 1,
+    "cnn": 2,
+    "protocol": 3,
+    "host_uart": 4,
+    "watchdog": 5,
+    "safety": 6,
+    "pose_protocol": 7,
+    "ethernet_error": 8
   },
   "ethernet": {
     "stream_width": 32,

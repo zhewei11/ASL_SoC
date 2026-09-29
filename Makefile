@@ -6,9 +6,12 @@ RV32F_UNIT_SIMV := $(BUILD_DIR)/rv32f_unit
 RV32F_CORE_SIMV := $(BUILD_DIR)/rv32f_core
 RV32F_TRAP_SIMV := $(BUILD_DIR)/rv32f_trap
 PMP_CSR_SIMV := $(BUILD_DIR)/pmp_csr
+HPM_CSR_SIMV := $(BUILD_DIR)/hpm_csr
+CACHE_HPM_SIMV := $(BUILD_DIR)/cache_hpm_event
 PMP_CORE_SIMV := $(BUILD_DIR)/core_pmp_user
 RV32F_RANDOM_DIR := $(BUILD_DIR)/rv32f_random
 SOC_CPU_SIMV := $(BUILD_DIR)/soc_cpu_boot
+DEBUG_SIMV := $(BUILD_DIR)/riscv_debug_jtag
 FREERTOS_SIMV := $(BUILD_DIR)/soc_freertos_boot
 CPU_IRQ_SIMV := $(BUILD_DIR)/soc_cpu_interrupt_timer
 CACHED_DRAM_SIMV := $(BUILD_DIR)/soc_cpu_cached_dram
@@ -33,6 +36,7 @@ PROTOCOL_RTL := rtl/protocol/core/uart_fractional_tick.sv \
 	rtl/protocol/core/protocol2_rt_engine.sv \
 	rtl/protocol/core/protocol2_mmio_wrapper.sv
 SOC_RTL := $(filter-out +%,$(shell sed '/^[[:space:]]*$$/d' rtl/rtl_smoke.f))
+CPU_RTL := $(filter-out +%,$(shell sed '/^[[:space:]]*$$/d' rtl/cpu_rv32im.f))
 CPU_ELF := $(BUILD_DIR)/rv32im_boot.elf
 CPU_BIN := $(BUILD_DIR)/rv32im_boot.bin
 CPU_MEM := $(BUILD_DIR)/rv32im_boot.mem
@@ -55,7 +59,7 @@ FREERTOS_ROM_MEM := $(BUILD_DIR)/freertos_rom.mem
 FREERTOS_ITCM_MEM := $(BUILD_DIR)/freertos_itcm.mem
 FREERTOS_DTCM_MEM := $(BUILD_DIR)/freertos_dtcm.mem
 
-.PHONY: all config headers cpu-source-check protocol-source-check test \
+.PHONY: all config headers cpu-source-check protocol-source-check test debug-test \
 	rv32f-random freertos-firmware freertos-test \
 	protocol-test protocol-long protocol-real-10k protocol-sva soc-sva \
 	cached-sva verify-all format format-check lint clean
@@ -139,7 +143,7 @@ $(CACHED_DRAM_BIN): $(CACHED_DRAM_ELF)
 $(CACHED_DRAM_MEM): $(CACHED_DRAM_BIN) scripts/bin_to_mem.py
 	python3 scripts/bin_to_mem.py --bytes 8192 $< $@
 
-$(CPU_SIMV): $(CPU_MEM) rtl/cpu_rv32im.f sim/tb/rv32im_boot_tb.sv
+$(CPU_SIMV): $(CPU_MEM) $(CPU_RTL) rtl/cpu_rv32im.f sim/tb/rv32im_boot_tb.sv
 	iverilog -g2012 -Wall -Wno-timescale -s rv32im_boot_tb \
 		-o $(CPU_SIMV) -f rtl/cpu_rv32im.f sim/tb/rv32im_boot_tb.sv
 
@@ -148,11 +152,13 @@ $(RV32F_UNIT_SIMV): rtl/cpu/core/ex/rv32f_unit.sv \
 	iverilog -g2012 -Wall -Wno-timescale -s rv32f_unit_tb \
 		-o $@ rtl/cpu/core/ex/rv32f_unit.sv sim/tb/rv32f_unit_tb.sv
 
-$(RV32F_CORE_SIMV): rtl/cpu_rv32im.f sim/tb/rv32f_core_tb.sv | $(BUILD_DIR)
+$(RV32F_CORE_SIMV): $(CPU_RTL) rtl/cpu_rv32im.f \
+		sim/tb/rv32f_core_tb.sv | $(BUILD_DIR)
 	iverilog -g2012 -Wall -Wno-timescale -s core_rv32f_tb \
 		-o $@ -f rtl/cpu_rv32im.f sim/tb/rv32f_core_tb.sv
 
-$(RV32F_TRAP_SIMV): rtl/cpu_rv32im.f sim/tb/rv32f_trap_tb.sv | $(BUILD_DIR)
+$(RV32F_TRAP_SIMV): $(CPU_RTL) rtl/cpu_rv32im.f \
+		sim/tb/rv32f_trap_tb.sv | $(BUILD_DIR)
 	iverilog -g2012 -Wall -Wno-timescale -s core_rv32f_trap_tb \
 		-o $@ -f rtl/cpu_rv32im.f sim/tb/rv32f_trap_tb.sv
 
@@ -161,7 +167,19 @@ $(PMP_CSR_SIMV): rtl/cpu/core/ex/csr_registers.v \
 	iverilog -g2012 -Wall -Wno-timescale -I rtl/include -s pmp_csr_tb \
 		-o $@ rtl/cpu/core/ex/csr_registers.v sim/tb/pmp_csr_tb.sv
 
-$(PMP_CORE_SIMV): rtl/cpu_rv32im.f sim/tb/core_pmp_user_tb.sv | $(BUILD_DIR)
+$(HPM_CSR_SIMV): rtl/cpu/core/ex/csr_registers.v \
+		sim/tb/hpm_csr_tb.sv | $(BUILD_DIR)
+	iverilog -g2012 -Wall -Wno-timescale -I rtl/include -s hpm_csr_tb \
+		-o $@ rtl/cpu/core/ex/csr_registers.v sim/tb/hpm_csr_tb.sv
+
+$(CACHE_HPM_SIMV): rtl/cpu/core/cache/L1C_inst.sv \
+		rtl/cpu/core/cache/L1C_data.sv sim/tb/cache_hpm_event_tb.sv | $(BUILD_DIR)
+	iverilog -g2012 -Wall -Wno-timescale -I rtl/include \
+		-s cache_hpm_event_tb -o $@ rtl/cpu/core/cache/L1C_inst.sv \
+		rtl/cpu/core/cache/L1C_data.sv sim/tb/cache_hpm_event_tb.sv
+
+$(PMP_CORE_SIMV): $(CPU_RTL) rtl/cpu_rv32im.f \
+		sim/tb/core_pmp_user_tb.sv | $(BUILD_DIR)
 	iverilog -g2012 -Wall -Wno-timescale -s core_pmp_user_tb \
 		-o $@ -f rtl/cpu_rv32im.f sim/tb/core_pmp_user_tb.sv
 
@@ -175,6 +193,14 @@ $(SOC_CPU_SIMV): $(CPU_MEM) config $(SOC_RTL) \
 		sim/tb/soc_cpu_boot_tb.sv | $(BUILD_DIR)
 	iverilog -g2012 -Wall -Wno-timescale -s soc_cpu_boot_tb \
 		-o $(SOC_CPU_SIMV) -f rtl/rtl_smoke.f sim/tb/soc_cpu_boot_tb.sv
+
+$(DEBUG_SIMV): $(CPU_MEM) config $(SOC_RTL) \
+		sim/tb/riscv_debug_jtag_tb.sv | $(BUILD_DIR)
+	iverilog -g2012 -Wall -Wno-timescale -s riscv_debug_jtag_tb \
+		-o $(DEBUG_SIMV) -f rtl/rtl_smoke.f sim/tb/riscv_debug_jtag_tb.sv
+
+debug-test: $(DEBUG_SIMV)
+	vvp $(DEBUG_SIMV)
 
 freertos-firmware: | $(BUILD_DIR)
 	$(MAKE) -C $(FREERTOS_DEMO_DIR) firmware CPU_CLOCK_HZ=100000000 \
@@ -338,8 +364,8 @@ verify-all: format-check test rv32f-random lint protocol-long protocol-real-10k 
 
 test: headers cpu-source-check protocol-source-check $(SIMV) $(INFRA_SIMV) \
 	$(CPU_SIMV) $(RV32F_UNIT_SIMV) $(RV32F_CORE_SIMV) $(RV32F_TRAP_SIMV) \
-	$(PMP_CSR_SIMV) $(PMP_CORE_SIMV) \
-	$(SOC_CPU_SIMV) $(FREERTOS_SIMV) $(CPU_IRQ_SIMV) \
+	$(PMP_CSR_SIMV) $(HPM_CSR_SIMV) $(CACHE_HPM_SIMV) $(PMP_CORE_SIMV) \
+	$(SOC_CPU_SIMV) $(DEBUG_SIMV) $(FREERTOS_SIMV) $(CPU_IRQ_SIMV) \
 	$(CACHED_DRAM_SIMV) $(UART_SIMV) \
 	$(CNN_DMA_SIMV) $(ETH_DMA_SIMV) $(IRQ_TIMER_SIMV) $(STRESS_SIMV) \
 	protocol-test
@@ -350,8 +376,11 @@ test: headers cpu-source-check protocol-source-check $(SIMV) $(INFRA_SIMV) \
 	vvp $(RV32F_CORE_SIMV)
 	vvp $(RV32F_TRAP_SIMV)
 	vvp $(PMP_CSR_SIMV)
+	vvp $(HPM_CSR_SIMV)
+	vvp $(CACHE_HPM_SIMV)
 	vvp $(PMP_CORE_SIMV)
 	vvp $(SOC_CPU_SIMV)
+	vvp $(DEBUG_SIMV)
 	vvp $(FREERTOS_SIMV)
 	vvp $(CPU_IRQ_SIMV)
 	vvp $(CACHED_DRAM_SIMV)
@@ -376,7 +405,9 @@ lint: config
 clean:
 	rm -f $(SIMV) $(INFRA_SIMV) $(CPU_SIMV) $(RV32F_UNIT_SIMV) \
 		$(RV32F_CORE_SIMV) $(RV32F_TRAP_SIMV) $(PMP_CSR_SIMV) \
-		$(PMP_CORE_SIMV) $(SOC_CPU_SIMV) $(FREERTOS_SIMV) $(UART_SIMV) \
+		$(HPM_CSR_SIMV) \
+		$(CACHE_HPM_SIMV) \
+		$(PMP_CORE_SIMV) $(SOC_CPU_SIMV) $(DEBUG_SIMV) $(FREERTOS_SIMV) $(UART_SIMV) \
 		$(STRESS_SIMV) $(CNN_DMA_SIMV) $(ETH_DMA_SIMV) $(IRQ_TIMER_SIMV) $(CPU_ELF) $(CPU_BIN) $(CPU_MEM) \
 		$(CPU_IRQ_SIMV) $(CPU_IRQ_ELF) $(CPU_IRQ_BIN) $(CPU_IRQ_MEM) \
 		$(CACHED_DRAM_SIMV) $(CACHED_DRAM_ELF) $(CACHED_DRAM_BIN) $(CACHED_DRAM_MEM) \
